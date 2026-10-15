@@ -1,0 +1,30 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.idea/
+.vscode/
+.cache/
+tmp/
+outputs/*
+!outputs/.gitkeep
+
+# 本地审查导出、临时文件和测试缓存
+/CargoVision*_Review.zip
+*.tmp
+*.log
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# 本地凭证与私钥不进入公开仓库
+.env
+.env.*
+!.env.example
+secrets/
+credentials.json
+*.pem
+*.key
+*.p12
+*.pfx
