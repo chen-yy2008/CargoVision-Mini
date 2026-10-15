@@ -60,6 +60,14 @@ def create_window(min_area: int):
     cv2.createTrackbar("View 0=RGB 1=R 2=G 3=B", WINDOW_NAME, 0, 3, lambda value: None)
 
 
+def window_is_open() -> bool:
+    """关闭按钮可能直接销毁原生窗口；查询此窗口时也可能抛出 cv2.error。"""
+    try:
+        return cv2.getWindowProperty(WINDOW_NAME, cv2.WND_PROP_VISIBLE) >= 1
+    except cv2.error:
+        return False
+
+
 def show_preview(annotated, masks):
     mode = PREVIEW_MODES[cv2.getTrackbarPos("View 0=RGB 1=R 2=G 3=B", WINDOW_NAME)]
     if mode == "original":
@@ -97,17 +105,23 @@ def run_image(args) -> int:
         return 0
     create_window(args.min_area)
     last_area = args.min_area
-    while True:
-        min_area = max(1, cv2.getTrackbarPos("Min area", WINDOW_NAME))
-        if min_area != last_area:
-            objects, masks = detect_objects(frame, min_area)
-            annotated = annotate_frame(frame, objects)
-            result = build_result(frame, objects, source, timestamp)
-            last_area = min_area
-            print(f"检测到 {len(objects)} 个目标，最小面积 {min_area} px^2。")
-        show_preview(annotated, masks)
-        key = cv2.waitKey(20) & 0xFF
-        if key in (27, ord("q"), ord("Q")) or cv2.getWindowProperty(WINDOW_NAME, cv2.WND_PROP_VISIBLE) < 1:
+    while window_is_open():
+        try:
+            min_area = max(1, cv2.getTrackbarPos("Min area", WINDOW_NAME))
+            if min_area != last_area:
+                objects, masks = detect_objects(frame, min_area)
+                annotated = annotate_frame(frame, objects)
+                result = build_result(frame, objects, source, timestamp)
+                last_area = min_area
+                print(f"检测到 {len(objects)} 个目标，最小面积 {min_area} px^2。")
+            show_preview(annotated, masks)
+            key = cv2.waitKey(20) & 0xFF
+        except cv2.error:
+            # 处理查询后、绘制前用户恰好关闭窗口的情况；窗口仍在则保留真实错误。
+            if window_is_open():
+                raise
+            break
+        if key in (27, ord("q"), ord("Q")) or not window_is_open():
             break
         if key in (ord("s"), ord("S")):
             export_current(annotated, result)
@@ -120,7 +134,7 @@ def run_camera(args) -> int:
         create_window(args.min_area)
         paused, frame, timestamp = False, None, None
         fps, previous_time = 0.0, None
-        while True:
+        while window_is_open():
             if not paused or frame is None:
                 ok, frame = cap.read()
                 if not ok or frame is None or frame.size == 0:
@@ -130,14 +144,19 @@ def run_camera(args) -> int:
                 if previous_time is not None:
                     fps = 1.0 / max(now - previous_time, 1e-9)
                 previous_time = now
-            min_area = max(1, cv2.getTrackbarPos("Min area", WINDOW_NAME))
-            objects, masks = detect_objects(frame, min_area)
-            annotated = annotate_frame(frame, objects, fps, paused)
-            # 即使预览的是 Mask，S 也保存同一帧的彩色标注图与 JSON。
-            result = build_result(frame, objects, f"camera:{args.camera}", timestamp)
-            show_preview(annotated, masks)
-            key = cv2.waitKey(20) & 0xFF
-            if key in (27, ord("q"), ord("Q")) or cv2.getWindowProperty(WINDOW_NAME, cv2.WND_PROP_VISIBLE) < 1:
+            try:
+                min_area = max(1, cv2.getTrackbarPos("Min area", WINDOW_NAME))
+                objects, masks = detect_objects(frame, min_area)
+                annotated = annotate_frame(frame, objects, fps, paused)
+                # 即使预览的是 Mask，S 也保存同一帧的彩色标注图与 JSON。
+                result = build_result(frame, objects, f"camera:{args.camera}", timestamp)
+                show_preview(annotated, masks)
+                key = cv2.waitKey(20) & 0xFF
+            except cv2.error:
+                if window_is_open():
+                    raise
+                break
+            if key in (27, ord("q"), ord("Q")) or not window_is_open():
                 break
             if key in (ord("p"), ord("P")):
                 paused = not paused

@@ -48,6 +48,7 @@ class MainTests(unittest.TestCase):
         cap.read.return_value = (False, None)
         error = io.StringIO()
         with patch("main.open_camera", return_value=cap), patch("main.create_window"), \
+                patch("main.cv2.getWindowProperty", return_value=1), \
                 patch("main.cv2.destroyAllWindows") as close, redirect_stderr(error):
             self.assertEqual(main.main(["--camera", "0"]), 1)
         self.assertIn("帧读取失败", error.getvalue())
@@ -113,6 +114,96 @@ class MainTests(unittest.TestCase):
                 patch("main.export_current", return_value=False), \
                 patch("main.cv2.destroyAllWindows"), redirect_stdout(io.StringIO()):
             self.assertEqual(main.main(["--image", "demo.png", "--no-display"]), 1)
+
+    def test_window_visibility_handles_destroyed_window(self):
+        for value, expected in ((1.0, True), (0.0, False), (-1.0, False)):
+            with self.subTest(value=value), patch("main.cv2.getWindowProperty", return_value=value):
+                self.assertEqual(main.window_is_open(), expected)
+        with patch("main.cv2.getWindowProperty", side_effect=cv2.error("window destroyed")):
+            self.assertFalse(main.window_is_open())
+
+    def test_close_button_is_normal_exit(self):
+        # 同时覆盖关闭后返回不可见、关闭后查询属性抛异常的原生后端行为。
+        for argv in (["--image", "demo.png"], ["--camera", "0"]):
+            for closed in (0, cv2.error("window destroyed")):
+                with self.subTest(argv=argv, closed=type(closed)), ExitStack() as stack:
+                    cap = MagicMock()
+                    cap.read.return_value = (True, make_demo())
+                    stack.enter_context(patch("main.open_camera", return_value=cap))
+                    stack.enter_context(patch("main.read_image", return_value=make_demo()))
+                    stack.enter_context(patch("main.create_window"))
+                    stack.enter_context(patch("main.show_preview"))
+                    stack.enter_context(patch("main.cv2.getTrackbarPos", return_value=300))
+                    stack.enter_context(patch("main.cv2.waitKey", return_value=-1))
+                    stack.enter_context(patch("main.cv2.getWindowProperty", side_effect=[1, closed]))
+                    close = stack.enter_context(patch("main.cv2.destroyAllWindows"))
+                    error = stack.enter_context(redirect_stderr(io.StringIO()))
+                    stack.enter_context(redirect_stdout(io.StringIO()))
+                    self.assertEqual(main.main(argv), 0)
+                    self.assertEqual(error.getvalue(), "")
+                    close.assert_called_once()
+                    if "--camera" in argv:
+                        cap.release.assert_called_once()
+
+    def test_close_during_window_calls_is_normal_exit(self):
+        # 属性查询成功后窗口仍可能被关闭，下一次滑条/绘制/按键调用会抛异常。
+        for argv in (["--image", "demo.png"], ["--camera", "0"]):
+            for failing_call in ("main.cv2.getTrackbarPos", "main.show_preview", "main.cv2.waitKey"):
+                with self.subTest(argv=argv, failing_call=failing_call), ExitStack() as stack:
+                    cap = MagicMock()
+                    cap.read.return_value = (True, make_demo())
+                    stack.enter_context(patch("main.open_camera", return_value=cap))
+                    stack.enter_context(patch("main.read_image", return_value=make_demo()))
+                    stack.enter_context(patch("main.create_window"))
+                    stack.enter_context(patch("main.show_preview"))
+                    stack.enter_context(patch("main.cv2.getTrackbarPos", return_value=300))
+                    stack.enter_context(patch("main.cv2.waitKey", return_value=-1))
+                    stack.enter_context(patch("main.cv2.getWindowProperty",
+                                              side_effect=[1, cv2.error("window destroyed")]))
+                    stack.enter_context(patch(failing_call, side_effect=cv2.error("window destroyed")))
+                    close = stack.enter_context(patch("main.cv2.destroyAllWindows"))
+                    error = stack.enter_context(redirect_stderr(io.StringIO()))
+                    stack.enter_context(redirect_stdout(io.StringIO()))
+                    self.assertEqual(main.main(argv), 0)
+                    self.assertEqual(error.getvalue(), "")
+                    close.assert_called_once()
+                    if "--camera" in argv:
+                        cap.release.assert_called_once()
+
+    def test_window_error_is_reported_while_window_still_open(self):
+        for argv in (["--image", "demo.png"], ["--camera", "0"]):
+            with self.subTest(argv=argv), ExitStack() as stack:
+                cap = MagicMock()
+                cap.read.return_value = (True, make_demo())
+                stack.enter_context(patch("main.open_camera", return_value=cap))
+                stack.enter_context(patch("main.read_image", return_value=make_demo()))
+                stack.enter_context(patch("main.create_window"))
+                stack.enter_context(patch("main.cv2.getTrackbarPos", return_value=300))
+                stack.enter_context(patch("main.cv2.getWindowProperty", return_value=1))
+                stack.enter_context(patch("main.show_preview", side_effect=cv2.error("render failed")))
+                stack.enter_context(patch("main.cv2.destroyAllWindows"))
+                error = stack.enter_context(redirect_stderr(io.StringIO()))
+                stack.enter_context(redirect_stdout(io.StringIO()))
+                self.assertEqual(main.main(argv), 1)
+                self.assertIn("render failed", error.getvalue())
+                if "--camera" in argv:
+                    cap.release.assert_called_once()
+
+    def test_closed_window_stops_before_next_frame(self):
+        cap = MagicMock()
+        with patch("main.open_camera", return_value=cap), patch("main.create_window"), \
+                patch("main.cv2.getWindowProperty", return_value=0), \
+                patch("main.cv2.destroyAllWindows"):
+            self.assertEqual(main.main(["--camera", "0"]), 0)
+        cap.read.assert_not_called()
+        cap.release.assert_called_once()
+
+    def test_window_cleanup_error_does_not_override_success(self):
+        with patch("main.read_image", return_value=make_demo()), \
+                patch("main.export_current", return_value=True), \
+                patch("main.cv2.destroyAllWindows", side_effect=cv2.error("already destroyed")), \
+                redirect_stdout(io.StringIO()):
+            self.assertEqual(main.main(["--image", "demo.png", "--no-display"]), 0)
 
     def test_invalid_arguments(self):
         for argv in (["--camera", "-1"], ["--min-area", "0"], ["--min-area", "100001"],
