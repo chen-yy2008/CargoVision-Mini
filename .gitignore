@@ -28,3 +28,11 @@ credentials.json
 *.key
 *.p12
 *.pfx
+
+# 实际设备配置与棋盘格照片默认留在本机；合成示例放在 samples/
+calibrations/*
+!calibrations/.gitkeep
+!calibrations/README.md
+camera_photos/*
+!camera_photos/.gitkeep
+!camera_photos/README.md

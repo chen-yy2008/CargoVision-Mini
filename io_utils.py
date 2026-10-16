@@ -9,6 +9,7 @@ import cv2
 import numpy as np
 
 from config import OUTPUT_DIR
+from calibration import calibration_metadata
 
 
 def read_image(path: Path) -> np.ndarray:
@@ -24,12 +25,18 @@ def read_image(path: Path) -> np.ndarray:
 
 
 def build_result(frame: np.ndarray, objects: list[dict], source: str,
-                 timestamp: str | None = None) -> dict:
-    """组装约定 JSON；timestamp 应传入当前帧读取时的带时区时间。"""
+                 timestamp: str | None = None, plane=None, intrinsics=None) -> dict:
+    """组装 0.2 JSON，保留既有像素字段；仅检测合法时对象中才有 center_mm。
+
+    frame、objects 与标注图必须属于同一 raw/undistorted 空间；timestamp 为帧获取时间。
+    """
     height, width = frame.shape[:2]
     return {
-        "schema_version": "0.1",
+        "schema_version": "0.2",
         "coordinate_system": "image_pixel",
+        "workplane_coordinate_system": "workplane_mm",
+        "pixel_frame": "undistorted" if intrinsics else "raw",
+        "calibration": calibration_metadata(plane, intrinsics),
         "image_size": {"width": width, "height": height},
         "source": source,
         "timestamp": timestamp or datetime.now().astimezone().isoformat(timespec="milliseconds"),

@@ -1,4 +1,4 @@
-"""CargoVision Mini V0.1：命令行入口、简单窗口和摄像头生命周期。"""
+"""CargoVision Mini：保留像素工作流，可选接入同平面毫米标定和内参校正。"""
 
 import argparse
 from datetime import datetime
@@ -9,6 +9,7 @@ from time import perf_counter
 
 try:
     import cv2
+    from calibration import (add_workplane_coordinates, load_calibration, undistort_frame)
     from config import (DEFAULT_MIN_AREA, MAX_MIN_AREA, PREVIEW_MODES, WINDOW_NAME)
     from io_utils import build_result, read_image, save_results
     from vision import annotate_frame, detect_objects
@@ -18,10 +19,13 @@ except ModuleNotFoundError as exc:
 
 
 def parse_args(argv=None):
+    """解析 CLI 并保持旧命令兼容；面积为 px²，配置路径可选，参数错误退出码为 2。"""
     parser = argparse.ArgumentParser(description="CargoVision Mini：红绿蓝目标的像素定位")
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--camera", type=int, help="摄像头编号，默认 0")
     group.add_argument("--image", type=Path, help="检测本地图片")
+    parser.add_argument("--calibration", type=Path, help="四点工作平面标定 JSON；不提供时只输出像素")
+    parser.add_argument("--intrinsics", type=Path, help="可选相机内参 JSON，先去畸变再检测")
     parser.add_argument("--min-area", type=int, default=DEFAULT_MIN_AREA,
                         help=f"最小轮廓面积，默认 {DEFAULT_MIN_AREA} px^2")
     parser.add_argument("--no-display", action="store_true", help="图片模式不打开窗口，并自动保存结果")
@@ -35,6 +39,8 @@ def parse_args(argv=None):
         parser.error("--no-display 和 --save 仅用于 --image 图片模式。")
     if args.camera is None:
         args.camera = 0
+    args.plane_data = None
+    args.intrinsics_data = None
     return args
 
 
@@ -60,10 +66,10 @@ def create_window(min_area: int):
     cv2.createTrackbar("View 0=RGB 1=R 2=G 3=B", WINDOW_NAME, 0, 3, lambda value: None)
 
 
-def window_is_open() -> bool:
+def window_is_open(window_name=WINDOW_NAME) -> bool:
     """关闭按钮可能直接销毁原生窗口；查询此窗口时也可能抛出 cv2.error。"""
     try:
-        return cv2.getWindowProperty(WINDOW_NAME, cv2.WND_PROP_VISIBLE) >= 1
+        return cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) >= 1
     except cv2.error:
         return False
 
@@ -90,14 +96,32 @@ def export_current(annotated, result):
     return True
 
 
+def analyze_frame(frame, args, source, timestamp, fps=None, paused=False):
+    """同一坐标空间的 BGR 帧 → 标注图、Mask、0.2 结果字典。
+
+    输入 frame 已按需去畸变；先保留像素质心，再附加合法的工作平面毫米坐标。
+    不在此处打开设备或写文件。分辨率/内参关联不符时抛 ValueError。
+    断点依次查看 objects（含 center_px）、converted（含 mm_status/center_mm）。
+    """
+    objects, masks = detect_objects(frame, args.min_area)
+    height, width = frame.shape[:2]
+    converted = add_workplane_coordinates(objects, args.plane_data,
+                                          {"width": width, "height": height}, args.intrinsics_data)
+    pixel_frame = "undistorted" if args.intrinsics_data else "raw"
+    status = ("CALIBRATED" if args.plane_data else "UNCALIBRATED") + f" | {pixel_frame}"
+    annotated = annotate_frame(frame, converted, fps, paused, calibration_status=status)
+    result = build_result(frame, converted, source, timestamp, args.plane_data, args.intrinsics_data)
+    return annotated, masks, result
+
+
 def run_image(args) -> int:
+    """读取单张图片，按需校正后检测/显示/导出；返回退出码，输入或标定错误向外抛出。"""
     frame = read_image(args.image)
     timestamp = datetime.now().astimezone().isoformat(timespec="milliseconds")
+    frame = undistort_frame(frame, args.intrinsics_data)
     source = f"image:{args.image.resolve()}"
-    objects, masks = detect_objects(frame, args.min_area)
-    annotated = annotate_frame(frame, objects)
-    result = build_result(frame, objects, source, timestamp)
-    print(f"检测到 {len(objects)} 个目标。")
+    annotated, masks, result = analyze_frame(frame, args, source, timestamp)
+    print(f'检测到 {len(result["objects"])} 个目标，标定状态：{result["calibration"]["status"]}。')
     if args.save or args.no_display:
         if not export_current(annotated, result):
             return 1
@@ -109,11 +133,10 @@ def run_image(args) -> int:
         try:
             min_area = max(1, cv2.getTrackbarPos("Min area", WINDOW_NAME))
             if min_area != last_area:
-                objects, masks = detect_objects(frame, min_area)
-                annotated = annotate_frame(frame, objects)
-                result = build_result(frame, objects, source, timestamp)
+                args.min_area = min_area
+                annotated, masks, result = analyze_frame(frame, args, source, timestamp)
                 last_area = min_area
-                print(f"检测到 {len(objects)} 个目标，最小面积 {min_area} px^2。")
+                print(f'检测到 {len(result["objects"])} 个目标，最小面积 {min_area} px^2。')
             show_preview(annotated, masks)
             key = cv2.waitKey(20) & 0xFF
         except cv2.error:
@@ -129,6 +152,7 @@ def run_image(args) -> int:
 
 
 def run_camera(args) -> int:
+    """处理摄像头帧和 P/S/Q 控制；暂停复用同一帧，任何退出路径都释放设备。"""
     cap = open_camera(args.camera)
     try:
         create_window(args.min_area)
@@ -140,16 +164,17 @@ def run_camera(args) -> int:
                 if not ok or frame is None or frame.size == 0:
                     raise RuntimeError("摄像头帧读取失败，可能已断开、被占用或权限受限。请检查后重新启动。")
                 timestamp = datetime.now().astimezone().isoformat(timespec="milliseconds")
+                # 始终先校正新帧，再复用同一校正帧进行检测、标注和导出；暂停不重复校正。
+                frame = undistort_frame(frame, args.intrinsics_data)
                 now = perf_counter()
                 if previous_time is not None:
                     fps = 1.0 / max(now - previous_time, 1e-9)
                 previous_time = now
             try:
                 min_area = max(1, cv2.getTrackbarPos("Min area", WINDOW_NAME))
-                objects, masks = detect_objects(frame, min_area)
-                annotated = annotate_frame(frame, objects, fps, paused)
-                # 即使预览的是 Mask，S 也保存同一帧的彩色标注图与 JSON。
-                result = build_result(frame, objects, f"camera:{args.camera}", timestamp)
+                args.min_area = min_area
+                # 即使预览的是 Mask，S 也保存同一坐标空间、同一帧的彩色图和毫米结果。
+                annotated, masks, result = analyze_frame(frame, args, f"camera:{args.camera}", timestamp, fps, paused)
                 show_preview(annotated, masks)
                 key = cv2.waitKey(20) & 0xFF
             except cv2.error:
@@ -169,8 +194,13 @@ def run_camera(args) -> int:
 
 
 def main(argv=None) -> int:
+    """加载合法的可选标定配置后运行；失败打印中文原因，返回 1 并清理窗口。"""
     args = parse_args(argv)
     try:
+        if args.calibration:
+            args.plane_data = load_calibration(args.calibration)
+        if args.intrinsics:
+            args.intrinsics_data = load_calibration(args.intrinsics, "camera_intrinsics")
         return run_image(args) if args.image is not None else run_camera(args)
     except (OSError, ValueError, RuntimeError, cv2.error) as exc:
         print(f"运行失败：{exc}", file=sys.stderr)

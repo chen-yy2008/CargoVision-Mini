@@ -97,7 +97,7 @@ class VisionTests(unittest.TestCase):
             np.testing.assert_array_equal(read_image(image_path), annotated)
             saved = json.loads(json_path.read_text(encoding="utf-8"))
             self.assertEqual(saved, result)
-            self.assertEqual(saved["schema_version"], "0.1")
+            self.assertEqual(saved["schema_version"], "0.2")
             self.assertEqual(saved["coordinate_system"], "image_pixel")
             self.assertEqual(saved["image_size"], {"width": 640, "height": 480})
             self.assertIsNotNone(datetime.fromisoformat(saved["timestamp"]).tzinfo)

@@ -63,7 +63,7 @@ def detect_objects(frame: np.ndarray, min_area: float = DEFAULT_MIN_AREA
 
 
 def annotate_frame(frame: np.ndarray, objects: list[dict], fps: float | None = None,
-                   paused: bool = False) -> np.ndarray:
+                   paused: bool = False, calibration_status: str | None = None) -> np.ndarray:
     """在副本上标注，保持参与检测的原图不变；界面文字统一英文。"""
     annotated = frame.copy()
     for obj in objects:
@@ -83,6 +83,14 @@ def annotate_frame(frame: np.ndarray, objects: list[dict], fps: float | None = N
                 label, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)[0][0]))
             cv2.putText(annotated, label, (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX,
                         0.45, text_color, 1, cv2.LINE_AA)
+        if "mm_status" in obj:
+            if obj["mm_status"] == "valid":
+                center_mm = obj["center_mm"]
+                metric_label = f'MM ({center_mm["x"]:.2f}, {center_mm["y"]:.2f})'
+            else:
+                metric_label = {"uncalibrated": "UNCALIBRATED", "outside_roi": "OUTSIDE ROI"}.get(obj["mm_status"], "INVALID MM")
+            cv2.putText(annotated, metric_label, (max(0, x), min(frame.shape[0] - 4, y + h + 34)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1, cv2.LINE_AA)
     status = f"Objects: {len(objects)}"
     if fps is not None:
         status += f" | FPS: {fps:.1f}"
@@ -90,4 +98,7 @@ def annotate_frame(frame: np.ndarray, objects: list[dict], fps: float | None = N
         status += " | PAUSED"
     cv2.putText(annotated, status, (10, 24), cv2.FONT_HERSHEY_SIMPLEX,
                 0.6, (255, 255, 255), 2, cv2.LINE_AA)
+    if calibration_status:
+        cv2.putText(annotated, calibration_status, (10, 47), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5, (0, 255, 255), 1, cv2.LINE_AA)
     return annotated

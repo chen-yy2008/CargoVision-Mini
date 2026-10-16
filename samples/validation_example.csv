@@ -1,0 +1,4 @@
+point_id,true_x_mm,true_y_mm,predicted_x_mm,predicted_y_mm
+SYNTHETIC_P1,50,50,53,54
+SYNTHETIC_P2,100,100,100,100
+SYNTHETIC_P3,150,150,147,146

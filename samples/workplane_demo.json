@@ -1,0 +1,64 @@
+{
+  "schema_version": "0.2",
+  "calibration_type": "workplane",
+  "id": "synthetic-demo-plane",
+  "created_at": "2026-10-16T00:00:00+08:00",
+  "origin": "TL",
+  "axes": {
+    "x": "TL_to_TR",
+    "y": "TL_to_BL"
+  },
+  "corner_order": [
+    "TL",
+    "TR",
+    "BR",
+    "BL"
+  ],
+  "width_mm": 290.0,
+  "height_mm": 195.0,
+  "corners_px": [
+    [
+      20.0,
+      50.0
+    ],
+    [
+      600.0,
+      50.0
+    ],
+    [
+      600.0,
+      440.0
+    ],
+    [
+      20.0,
+      440.0
+    ]
+  ],
+  "H": [
+    [
+      0.5000000000000001,
+      1.5586635034222725e-18,
+      -10.000000000000002
+    ],
+    [
+      0.0,
+      0.5000000000000001,
+      -25.000000000000007
+    ],
+    [
+      1.8847287420692319e-19,
+      -0.0,
+      1.0
+    ]
+  ],
+  "matrix_direction": "pixel_to_workplane_mm",
+  "image_size": {
+    "width": 640,
+    "height": 480
+  },
+  "source": "synthetic:samples/demo.png",
+  "pixel_frame": "raw",
+  "undistorted": false,
+  "intrinsics_reference": null,
+  "synthetic": true
+}

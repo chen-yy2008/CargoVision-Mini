@@ -1,4 +1,4 @@
-# CargoVision Mini 源码学习指南
+# CargoVision Mini 源码学习指南（V0.1 → V0.2）
 
 先运行样图，再按本文在真实源码中逐个寻找函数。所有实验只操作图片，不需要机械或电控硬件。
 
@@ -107,3 +107,107 @@ print(objects)  # 只有绿色目标；没有窗口和摄像头依赖
 `tests/test_main.py` 用模拟摄像头验证后端回退、读取失败释放资源、暂停时不读新帧、保存、恢复与退出。模拟通过只证明控制流程，真实 USB 摄像头、驱动、光照和按键仍需本机验收。
 
 修改一个参数后运行 `.\.venv\Scripts\python.exe -m unittest discover -s tests -v`，观察变更对预期行为的影响。实验结束恢复默认参数并重新确认测试。
+
+## 9. V0.2：先区分三种坐标和两个矩阵
+
+V0.1 的 `center_px` 是图像上的像素质心。V0.2 不替换它，而是先检查标定，再可选添加 `center_mm`：
+
+```text
+raw BGR 帧
+  ↓ 可选 calibration.undistort_frame(K, 畸变)，保持原 K / 原尺寸 / 不裁剪
+raw 或 undistorted BGR 帧（之后每一步都保持这个空间）
+  ↓ vision.detect_objects()
+center_px：图像左上角为原点，单位 pixel
+  ↓ calibration.add_workplane_coordinates()：分辨率、内参关联和 ROI 检查
+calibration.pixel_to_workplane()：H 映射
+  ↓
+center_mm：标定 TL 为原点，X 沿 TL→TR、Y 沿 TL→BL，单位 mm
+  ↓ main.analyze_frame()：同一帧绘图 + io_utils.build_result() / save_results()
+```
+
+这不是机器人机械坐标，没有 Z、机械零点或抓取规划。`center_mm` 只有 `mm_status == "valid"` 时存在；无标定时仍输出像素。检测框、十字、PNG 和 JSON 的 `center_px` 均对应当前 `pixel_frame`，不要把校正前后的像素混在一起。
+
+同为 3×3 矩阵，`camera_matrix`（K）和 H 用途不同：K 描述针孔相机的焦距/主点（pixel），与畸变系数一起校正成像；H 把当前图像坐标映射到指定平面的毫米坐标。K 不能直接给出桌面毫米位置，H 也不能代替镜头畸变模型。
+
+## 10. H 是怎么生成的
+
+首先阅读 [calibration.py 的 create_plane_calibration()](calibration.py#L165)，在 `corners`、`matrix` 两处设断点。
+
+```python
+matrix = cv2.getPerspectiveTransform(
+    corners.astype(np.float32),
+    _rectangle_mm(width_mm, height_mm),
+)
+```
+
+左边的四个输入点严格为 **TL→TR→BR→BL**，单位 pixel；右边依次是 `(0,0)`、`(width_mm,0)`、`(width_mm,height_mm)`、`(0,height_mm)`，单位 mm。这个对应关系决定了方向，不能只把点按某个 x 值排序就认为完成了标定，也不能误把照片分辨率填成真实边长。
+
+`validate_corners()` 检查是否在图像内、相邻点是否重复/过近、四边形是否凸且顺序正确，以及面积是否足够。归一化叉积用于检查近共线；小面积区域不适合稳定拟合。`validate_plane_calibration()` 进一步检查 H 的数值/近奇异性、齐次分母是否跨零、四角映射是否与尺寸一致。
+
+四个角点残差很小，只能说明 H 符合你输入的四对点，**不能说明真实定位误差很小**；错误尺量、点错实际边界或镜头畸变可能被四点拟合掩盖。
+
+## 11. 从一个像素质心到毫米
+
+阅读 [calibration.py 的 pixel_to_workplane()](calibration.py#L290)。设置断点观察 `point`、`denominator`、`mapped`。
+
+把像素写为齐次向量 `[x,y,1]`，H 相乘得到 `[u,v,w]`，最后要做透视除法：
+
+```text
+u = H00*x + H01*y + H02
+v = H10*x + H11*y + H12
+w = H20*x + H21*y + H22
+X_mm = u / w
+Y_mm = v / w
+```
+
+代码用 OpenCV `perspectiveTransform()` 完成这一步，没有自行重写算法。透视场景的 `w` 会随位置改变，所以通常没有整幅画面通用的固定“每 pixel 等于多少 mm”。合成 demo 恰好使用 0.5 mm/pixel，是人为构造的简单测试，不能套到摄像头上。
+
+转换前 `pointPolygonTest()` 先判断质心是否位于四角 ROI 内；区域外返回 `(None, "outside_roi")`，不输出外推值。边界点允许参与变换。转换后也检查是否有限，避免 NaN/Inf 进入 JSON。毫米元信息中 `valid` 表示配置/区域有效，**不表示已通过真实毫米精度验收**。
+
+在 `main.analyze_frame()` 中对比 `objects` 和 `converted`：前者保持 V0.1 像素字段；后者是新字典，添加状态及合法的毫米值，不修改原检测列表。
+
+## 12. 为什么先去畸变，再点选四角和识别
+
+阅读 [calibration.py 的 undistort_frame()](calibration.py#L276) 与 `check_frame_context()`。raw 像素上的一个点，校正后可能移动；如果继续使用 raw 的 H，会将一个空间的坐标错误地交给另一个空间的映射。
+
+因此平面标定工具和运行程序都采用 `cv2.undistort(frame, K, distortion, None, K)`，保持原 K、尺寸且不裁剪。平面配置记录 `pixel_frame` 和 `intrinsics_reference`，后者含内参 id 与参数指纹；哪怕 id 没变，只要参数被改写，就拒绝混用。分辨率不同也直接报错，不静默缩放 H。
+
+不启用内参时，这条分支完全跳过，四点 raw 标定仍可独立使用。需要先实测判断畸变影响，不能认为打开去畸变就自然达到亚毫米精度。
+
+独立进阶工具的 [calibrate_camera.py 的 calibrate_from_points()](calibrate_camera.py#L35) 中，`object_points` 是棋盘格内角点的 Z=0 毫米坐标，`observations` 是每张照片的亚像素角点。`calibrateCamera()` 估计 K/畸变后，`projectPoints()` 把已知棋盘格再次投回图像，与观测比较。
+
+重投影 RMSE 是 `sqrt(mean(dx_px² + dy_px²))`，单位 pixel；它是模型对角点的拟合误差，不是工作平面的 mm 误差。至少 5 幅不同观测只是程序门槛，真实照片建议 15~25 幅，多位置、多倾角；模型是普通针孔/径向切向畸变，并非专用鱼眼模型。
+
+`calibrate_images()` 的 `cornerSubPix(...,(5,5),...)` 表示半径 5，即 11×11 pixel 搜索邻域。邻域过大可能包含相邻棋盘角点、把精修位置拉偏；项目使用官方示例的较小窗口，并以小间距的合成棋盘格做回归验证。不要把“大窗口”简单理解为“更精确”，也不要靠精修挽救过小或模糊的照片。
+
+## 13. 独立误差评估与误差来源
+
+阅读 [scripts/evaluate_calibration.py 的 evaluate_measurements()](scripts/evaluate_calibration.py#L17)，断点看 `true_points`、`differences`、`distances`。真实值必须来自尺量等独立方法，预测值来自当前标定下的 `center_mm`。
+
+```python
+differences = predicted_points - true_points  # mm
+distance = np.sqrt(dx_mm ** 2 + dy_mm ** 2)
+rmse = np.sqrt(np.mean(dx_mm ** 2 + dy_mm ** 2))
+```
+
+示意中的变量名用于说明公式；项目实际用 `array[:, 2:] - true_points` 和 `np.linalg.norm()`。提供三个以上不同位置；指定平面配置时会拒绝拟合四角和区域外真值。正负误差平均可能互相抵消，所以同时看平均距离、最大值和 RMSE。
+
+误差可能来自手动点选、纸张不平/尺寸误差、相机畸变、模糊、光照导致分割边缘变化、V0.1 整数质心取整，以及相机移动或目标高度产生的视差。透视图中像素区域质心映射到平面后，也不一定等于该物体在平面上的真实面积质心。首轮应使用贴近平面的薄标记，并用同一空间的真值来验证；不要把厚货物顶部当桌面测试。
+
+## 14. 推荐学习顺序与五个实验
+
+| 顺序 | 文件与真实函数 | 重点输入 → 输出 / 断点变量 |
+| --- | --- | --- |
+| 1 | `calibration.py:165 create_plane_calibration()` | 四角 px、实测宽高 mm → H 配置；看 corners / matrix |
+| 2 | `calibration.py:290 pixel_to_workplane()` | center_px、合法平面配置 → 毫米字典/None 和状态；看 denominator / mapped |
+| 3 | `calibration.py:276 undistort_frame()` | raw 帧、可选内参 → 同尺寸校正帧；看 K 与校正前后像素 |
+| 4 | `calibrate_camera.py:35 calibrate_from_points()` | 多视角角点 → K、畸变、pixel 重投影误差；看 projected / squared_errors |
+| 5 | `scripts/evaluate_calibration.py:17 evaluate_measurements()` | 独立真值与预测值 → 逐点及总体 mm 误差；看 differences / distances |
+
+先用 `make_demo_calibration()` 取得合成字典副本做实验，不修改真实设备配置；每次实验后恢复默认值并跑测试。
+
+1. **改变物理尺寸**：保持四角不变，将宽 290 mm 改为 580 mm 再重新创建 H。相同像素点的 X_mm 翻倍，Y_mm 不变；像素结果不会改变。
+2. **改变点序**：交换第二、第三点，预期因交叉/顺序错误被拒绝；不要绕过校验硬保存。
+3. **移动到 ROI 外**：将点从 `(110,130)` 改到 `(0,0)`。预期从 `(45,40)` mm 变成 outside_roi，且没有 center_mm。
+4. **打破空间关联**：用合成 K 创建 undistorted 平面，再以 raw 模式调用 `check_frame_context()`；预期拒绝。更改分辨率或同 id 的畸变系数也应拒绝，而不是勉强给出坐标。
+5. **修改独立误差样例**：样例三个距离为 5、0、5 mm，RMSE 为 sqrt(50/3)。把全部预测值改为等于真实值，统计应归零；这只验证脚本公式，不证明你的摄像头精度。

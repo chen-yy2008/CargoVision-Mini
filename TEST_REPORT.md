@@ -1,4 +1,65 @@
-# V0.1 实际测试报告
+# CargoVision 实际测试报告
+
+## V0.2 开发版 — 2026-10-16
+
+### 环境与实际执行
+
+复用项目原有 Windows x64 `.venv`：Python 3.12.14、opencv-python 4.12.0.88（cv2 4.12.0）、NumPy 2.2.6；没有新增第三方依赖或修改其他项目。
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+.\.venv\Scripts\python.exe -m compileall -q main.py vision.py config.py io_utils.py calibration.py calibrate_plane.py calibrate_camera.py scripts tests
+.\.venv\Scripts\python.exe -m pip check
+.\.venv\Scripts\python.exe main.py --image samples/demo.png --no-display
+.\.venv\Scripts\python.exe main.py --image samples/demo.png --calibration samples/workplane_demo.json --no-display
+.\.venv\Scripts\python.exe calibrate_plane.py --inspect samples/workplane_demo.json
+.\.venv\Scripts\python.exe scripts/evaluate_calibration.py --input samples/validation_example.csv --calibration samples/workplane_demo.json
+.\.venv\Scripts\python.exe calibrate_camera.py --images camera_photos --cols 9 --rows 6 --square-mm 20
+```
+
+最后一条是对没有照片的目录执行的失败路径检查，预期退出码 1；真实操作应将棋盘格照片单独放进 camera_photos/chessboard，再按 README 执行。
+
+| 验证项 | 实际结果与边界 |
+| --- | --- |
+| unittest | **74 项通过，0 失败，0 跳过**；保留初版 31 项并适配 JSON 0.2，新增 43 项 |
+| compileall / pip check | 均通过；无依赖冲突 |
+| 原有图片命令 | 4 个目标，uncalibrated，无 center_mm，PNG/JSON 保存成功 |
+| 合成毫米图片命令 | 4 个目标且均在 ROI 内；中心约为 (45,40)、(135,40)、(230,45)、(80,145) mm；这些只是合成映射值 |
+| 合成平面配置 inspect | 成功读取，输出 H、尺寸、四角、分辨率、原点、轴与 raw 状态 |
+| 合成误差 CSV | 平均距离 3.333333 mm，最大 5 mm，RMSE 4.082483 mm，与手算一致；不代表相机精度 |
+| 空棋盘格目录 | 明确提示至少需要 5 幅，退出码 1，没有创建真实相机参数 |
+| 原生平面窗口程序化检查 | 真实创建 AUTOSIZE 窗口和注册鼠标回调，用程序输入四个合成点、S 保存，再读取验证；通过，不是人工点选或实物实验 |
+| 原生毫米预览窗口检查 | 真实创建窗口、绘制标注并自动 Q 退出；通过，仅使用合成图 |
+| 合成棋盘格照片 CLI 端到端 | 在临时目录生成 10 幅不同姿态的棋盘格 PNG，经实际角点检测、精修、求解、误差输出及 JSON 读取通过；非真实照片，临时文件已清理 |
+
+### C01–C12 覆盖
+
+- C01：四角对应的毫米数值和轴方向，误差容差 0.000001 mm，仅用于确定的合成数据。
+- C02：合成透视映射的四个独立内部点，容差 0.0001 mm；它们没有参与计算 H，且不表示实物精度。
+- C03：共线、近共线、重复、交叉、方向错误、区域过小、越界、非有限坐标、非法尺寸/类型均拒绝。
+- C04/C05：raw/undistorted 平面与内参 JSON 中文路径读写，默认不覆盖；缺字段、坏版本、损坏矩阵、轴方向、时区、去畸变关联错误均拒绝。
+- C06：图像尺寸改变时拒绝毫米结果，包括没有任何目标的图像，不静默缩放 H。
+- C07/C08：无标定保留像素字段；区域外不含 center_mm，边界点有效，原检测列表不被改写。
+- C09：同帧像素/毫米/标定 id、JSON 与 PNG 一致；导出 schema 0.2 和 image_pixel / workplane_mm 明确。
+- C10：零畸变流程、分辨率匹配、原图/校正图不可混用、同 id 改参数的指纹拒绝；棋盘格检测、照片不足/重复/尺寸不一致、内参求解和实际重投影 RMSE。已知针孔参数投影角点求解测试误差小于 0.001 pixel，仅是数学测试。
+- C11：三个独立点的 dx/dy/距离、均值/最大/RMSE 与手算一致；空/重复/NaN 数据、拟合角点与区域外真值有明确反馈；CSV/JSON 和输出防覆盖测试通过。
+- C12：图片/模拟摄像头的暂停、保存、滑条、Mask、错误反馈、关闭窗口和资源释放保持；新增工具的冻结、缩放坐标、覆盖确认/取消/重选以及内参关联已测。
+
+### 检查中发现并修复的问题
+
+完整的合成棋盘格照片 CLI 检查发现，角点间距约 14~20 pixel 时，半径 11 的亚像素窗口可能跨到相邻角点，导致部分观测漂移。对同一合成数据比较后，使用 OpenCV 官方 calibrate.py 的半径 5；合成照片的总体重投影 RMSE 从约 1.73 降至约 0.31 pixel。已加入实际检测/精修/求解的回归测试，检查总体及最差视图误差小于 0.6 pixel，全部 74 项复测通过。
+
+以上误差数值只描述这批人造图像和算法回归，没有实际相机、真实棋盘格、镜头畸变测量或毫米精度含义；程序报告逐图误差，不自动宣称某次标定足够精确。
+
+### 待用户实测与版本管理
+
+**V0.2 未实际采集真实摄像头、未取得真实 K/畸变、未在桌面完成四点标定，也未测得真实毫米误差。** Windows 实验步骤见 README 第 9–11 节。V0.1 用户已通过的实机验收仍保留为历史，不能替代新标定功能的验收。
+
+代码继续在原 main 分支增量迭代，保留 v0.1.0；仅在测试通过后提交/推送开发代码，不创建 v0.2.0 Tag 或 Release。真实标定 JSON 和照片、实验输出、虚拟环境、缓存及审查 ZIP 默认不上传；公开的 samples 配置与测量例子明确标为合成数据。
+
+---
+
+# V0.1 历史测试报告
 
 测试日期：2026-10-15，Windows 项目工作区。执行命令前进入包含 `main.py` 的项目根目录。
 
