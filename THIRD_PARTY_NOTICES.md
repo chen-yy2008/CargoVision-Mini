@@ -45,3 +45,10 @@ OpenCV/NumPy 的二进制包可能携带其他组件的条款，例如媒体组�
 | [OpenCV 4.12.0 许可证](https://github.com/opencv/opencv/blob/4.12.0/LICENSE) | 官方实现为 Apache-2.0，使用已有 wheel 的公开 API；继续遵守 wheel 随附的完整第三方条款，不给本项目擅自选择开源许可证 |
 
 本项目去畸变有意选择保持原 K、原尺寸、不裁剪的单一路径，以便平面标定与识别严格共享像素空间；不直接照搬示例里改变新 K 并裁剪 ROI 的流程。内参内容指纹用于防止配置混用，不是设备身份认证。无需 OpenPnP 依赖，也未复用其源码。合成棋盘格图案和投影角点由测试自行生成；它们不能替代真实照片或证明实际测量精度。
+
+## Windows 体验优化调查（2026-10-31）
+
+- 参考 [OpenCV 4.12 HighGUI 官方文档](https://docs.opencv.org/4.12.0/d7/dfc/group__highgui.html)：沿用 namedWindow/resizeWindow/getWindowImageRect/Trackbar，在首次初始化设大小，随后按实际图像区域合成等比画布，不引入 Qt/Tkinter。
+- 参考 [VideoCapture 属性文档](https://docs.opencv.org/4.12.0/d4/d15/group__videoio__flags__base.html) 及 [Windows DirectShow 官方实现](https://github.com/opencv/opencv/blob/4.12.0/modules/videoio/src/cap_dshow.cpp)：区分请求设置、实际帧尺寸、驱动报告帧率与循环帧率；不假定后端索引永久绑定物理设备。
+- 选择索引＋实际后端的本机偏好，不使用 PnP 列表顺序来猜 OpenCV 编号；真正的物理设备路径映射需要额外验证，当前不声称已实现。未复制上游源码，没有增加依赖，继续沿用已有 wheel 的完整许可。
+- 屏幕工作区只通过 Windows 标准 API 和 Python 标准库 ctypes 查询；紧凑标注、列表分页和等比画布为本项目显示代码，不更改视觉算法或标定数学。

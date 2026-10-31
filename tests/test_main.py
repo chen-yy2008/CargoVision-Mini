@@ -16,6 +16,13 @@ from scripts.make_demo import make_demo
 
 
 class MainTests(unittest.TestCase):
+    def setUp(self):
+        # 单元测试不读取或改写用户当前的真实摄像头选择。
+        for name in ("load_camera_preference", "save_camera_preference"):
+            patcher = patch(f"main.{name}", return_value=None)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
     def test_t06_missing_file_reports_error_and_closes_windows(self):
         error = io.StringIO()
         with patch("main.read_image", side_effect=FileNotFoundError("图片不存在：missing.png")), \
@@ -37,7 +44,7 @@ class MainTests(unittest.TestCase):
         first, second = MagicMock(), MagicMock()
         first.open.return_value = False
         second.open.return_value = second.isOpened.return_value = True
-        with patch("main.os.name", "nt"), \
+        with patch("camera_utils.os.name", "nt"), \
                 patch("main.cv2.VideoCapture", side_effect=[first, second]):
             self.assertIs(main.open_camera(0), second)
         first.release.assert_called_once()
@@ -103,7 +110,9 @@ class MainTests(unittest.TestCase):
         frame = make_demo()
         masks = {color: frame[:, :, 0] * 0 for color in ("red", "green", "blue")}
         masks["green"][100:200, 100:200] = 255
-        with patch("main.cv2.getTrackbarPos", return_value=2), patch("main.cv2.imshow") as show:
+        with patch("main.cv2.getTrackbarPos", return_value=2), patch("main.cv2.imshow") as show, \
+                patch("main.cv2.getWindowImageRect", return_value=(0, 0, 960, 720)), \
+                patch("main.render_workbench", side_effect=lambda frame, *args: frame):
             main.show_preview(frame, masks)
         preview = show.call_args.args[1]
         self.assertEqual(tuple(preview[150, 150]), (255, 255, 255))

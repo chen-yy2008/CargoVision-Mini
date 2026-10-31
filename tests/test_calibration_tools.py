@@ -269,6 +269,12 @@ class ErrorEvaluationTests(unittest.TestCase):
 
 
 class MetricIntegrationTests(unittest.TestCase):
+    def setUp(self):
+        for name in ("load_camera_preference", "save_camera_preference"):
+            patcher = patch(f"main.{name}", return_value=None)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
     def test_c07_headless_original_command_has_no_mm(self):
         with patch("main.read_image", return_value=make_demo()), patch("main.export_current", return_value=True) as export, \
                 patch("main.cv2.destroyAllWindows"), redirect_stdout(io.StringIO()):

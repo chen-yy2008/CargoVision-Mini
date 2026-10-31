@@ -36,3 +36,6 @@ calibrations/*
 camera_photos/*
 !camera_photos/.gitkeep
 !camera_photos/README.md
+
+# 本机摄像头索引、视频后端与分辨率偏好
+/local_settings/

@@ -211,3 +211,15 @@ rmse = np.sqrt(np.mean(dx_mm ** 2 + dy_mm ** 2))
 3. **移动到 ROI 外**：将点从 `(110,130)` 改到 `(0,0)`。预期从 `(45,40)` mm 变成 outside_roi，且没有 center_mm。
 4. **打破空间关联**：用合成 K 创建 undistorted 平面，再以 raw 模式调用 `check_frame_context()`；预期拒绝。更改分辨率或同 id 的畸变系数也应拒绝，而不是勉强给出坐标。
 5. **修改独立误差样例**：样例三个距离为 5、0、5 mm，RMSE 为 sqrt(50/3)。把全部预测值改为等于真实值，统计应归零；这只验证脚本公式，不证明你的摄像头精度。
+
+## 15. Windows 使用体验层（不改变检测与标定数学）
+
+`camera_utils.choose_camera()` 是可断点观察的纯选择函数：显式参数优先，其次本机偏好，无偏好才使用 0。`load_camera_preference()` 对损坏配置明确报错；`save_camera_preference()` 在实际首帧及标定检查通过后原子写入。索引不是物理设备身份，插拔后仍需核对画面，不能把某个编号永远称为 USB 摄像头。
+
+`configure_capture()` 只在用户请求（或恢复已保存尺寸）时设置宽高。先比较标定尺寸，再调用 cap.set；最终以 `capture_info()` 中来自 frame.shape 的实际宽高为准。请在 choice、请求 size 和首帧 info 处设断点，观察“请求成功”与“实际生效”的区别。
+
+`display.fit_image_rect()` 使用 `min(可用宽/原宽, 可用高/原高)` 求比例，再居中补黑；检测、去畸变、H 和 JSON 从不使用这个显示比例。`render_workbench()` 对预览建立独立的几何副本，原 center_px/center_mm 不回写；UI 的 page 会随可显示页数钳制，这是显式显示状态。
+
+`label_layout()` 尝试把短编号放在框周围，避免相互重叠或遮住十字。极密区域无法在有限像素里显示所有文字，就保留框和中心，完整编号/坐标移到分页列表。原尺寸导出 PNG 也采用短编号；详细值继续完整保存在 JSON。核心检测 create_masks/detect_objects/contour_center 和 calibration.py 的数学均保持不变。
+
+可以做三个小实验：改变预览窗口宽高比，对比导出 image_size 和坐标不变；在 60 目标合成预览中按 [ ] 翻页；用模拟配置比较显式 --camera 与偏好优先级。不要为了学习配置而改写用户真实设备数据，测试使用临时目录或 .cache。

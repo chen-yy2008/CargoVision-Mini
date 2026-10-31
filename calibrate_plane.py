@@ -13,6 +13,7 @@ from calibration import (CORNER_ORDER, create_plane_calibration, load_calibratio
 from config import PROJECT_DIR
 from io_utils import read_image
 from main import open_camera, window_is_open
+from camera_utils import capture_info, configure_capture
 
 PLANE_WINDOW = "CargoVision Plane Calibration"
 HEADER_HEIGHT = 90
@@ -72,10 +73,17 @@ def select_plane(args, intrinsics=None):
         if args.image:
             state["frame"] = undistort_frame(read_image(args.image), intrinsics)
         else:
-            cap = open_camera(args.camera)
+            backend = args.backend.upper() if args.backend and args.backend != "auto" else None
+            cap = open_camera(args.camera, backend) if backend else open_camera(args.camera)
+            requested = {"width": args.width, "height": args.height} if args.width is not None else None
+            configure_capture(cap, requested, intrinsics=intrinsics)
             ok, raw = cap.read()
             if not ok or raw is None or raw.size == 0:
                 raise RuntimeError("摄像头帧读取失败，无法进行平面标定。")
+            info = capture_info(cap, raw)
+            print(f'平面标定实际采集：{info["width"]}×{info["height"]}，后端 {info["backend"]}。后续识别必须使用相同设备、后端和分辨率。')
+            if requested and requested != {"width": info["width"], "height": info["height"]}:
+                print("设备未返回请求的分辨率，将依据实际帧尺寸标定，请核对。")
             state["frame"] = undistort_frame(raw, intrinsics)
         # AUTOSIZE 固定展示画布大小，禁止拖拽缩放；大图先自行 resize 再换算点击。
         cv2.namedWindow(PLANE_WINDOW, cv2.WINDOW_AUTOSIZE)
@@ -163,6 +171,9 @@ def main(argv=None):
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--image", type=Path)
     group.add_argument("--camera", type=int)
+    parser.add_argument("--backend", choices=("auto", "dshow", "msmf"), help="相机后端，应与识别时保持一致")
+    parser.add_argument("--width", type=int, help="可选采集宽度 pixel（不是 width-mm）")
+    parser.add_argument("--height", type=int, help="可选采集高度 pixel，须同时指定宽度")
     parser.add_argument("--width-mm", type=float, help="TL→TR 实测边长，毫米")
     parser.add_argument("--height-mm", type=float, help="TL→BL 实测边长，毫米")
     parser.add_argument("--intrinsics", type=Path, help="可选相机内参，先去畸变再点选四角")
@@ -177,6 +188,12 @@ def main(argv=None):
             parser.error("必须指定 --image 或 --camera；也可用 --inspect 检查配置。")
         if args.camera is not None and args.camera < 0:
             parser.error("摄像头编号不能为负数。")
+        if (args.width is None) != (args.height is None):
+            parser.error("--width 和 --height 必须一起指定。")
+        if args.width is not None and not (1 <= args.width <= 16384 and 1 <= args.height <= 16384):
+            parser.error("采集宽高必须在 1~16384 pixel 之间。")
+        if args.image is not None and (args.width is not None or args.backend is not None):
+            parser.error("图片标定不使用采集分辨率或后端参数。")
         positive_number(args.width_mm, "width_mm")
         positive_number(args.height_mm, "height_mm")
         intrinsics = load_calibration(args.intrinsics, "camera_intrinsics") if args.intrinsics else None

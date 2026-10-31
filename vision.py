@@ -3,7 +3,8 @@
 import cv2
 import numpy as np
 
-from config import DEFAULT_MIN_AREA, DRAW_COLORS, HSV_RANGES, MORPH_KERNEL_SIZE
+from config import DEFAULT_MIN_AREA, HSV_RANGES, MORPH_KERNEL_SIZE
+from display import draw_detections
 
 
 def create_masks(frame: np.ndarray) -> dict[str, np.ndarray]:
@@ -64,41 +65,23 @@ def detect_objects(frame: np.ndarray, min_area: float = DEFAULT_MIN_AREA
 
 def annotate_frame(frame: np.ndarray, objects: list[dict], fps: float | None = None,
                    paused: bool = False, calibration_status: str | None = None) -> np.ndarray:
-    """在副本上标注，保持参与检测的原图不变；界面文字统一英文。"""
-    annotated = frame.copy()
-    for obj in objects:
-        box = obj["bbox_xywh"]
-        x, y, w, h = (box[k] for k in ("x", "y", "w", "h"))
-        cx, cy = obj["center_px"]["x"], obj["center_px"]["y"]
-        color = DRAW_COLORS[obj["color"]]
-        cv2.rectangle(annotated, (x, y), (x + w - 1, y + h - 1), color, 2)
-        # 白色十字配黑色描边，在纯红/绿/蓝物体内部也能看清中心。
-        cv2.drawMarker(annotated, (cx, cy), (0, 0, 0), cv2.MARKER_CROSS, 16, 4)
-        cv2.drawMarker(annotated, (cx, cy), (255, 255, 255), cv2.MARKER_CROSS, 16, 2)
-        # 名称在框上方，坐标在框下方，减少相邻目标的长标签重叠。
-        labels = ((f'{obj["color"].upper()} #{obj["id"]}', max(14, y - 8), color),
-                  (f"CENTER ({cx}, {cy})", min(frame.shape[0] - 4, y + h + 17), (255, 255, 255)))
-        for label, text_y, text_color in labels:
-            text_x = max(0, min(x, frame.shape[1] - cv2.getTextSize(
-                label, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)[0][0]))
-            cv2.putText(annotated, label, (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX,
-                        0.45, text_color, 1, cv2.LINE_AA)
-        if "mm_status" in obj:
-            if obj["mm_status"] == "valid":
-                center_mm = obj["center_mm"]
-                metric_label = f'MM ({center_mm["x"]:.2f}, {center_mm["y"]:.2f})'
-            else:
-                metric_label = {"uncalibrated": "UNCALIBRATED", "outside_roi": "OUTSIDE ROI"}.get(obj["mm_status"], "INVALID MM")
-            cv2.putText(annotated, metric_label, (max(0, x), min(frame.shape[0] - 4, y + h + 34)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1, cv2.LINE_AA)
+    """原尺寸导出图只画框、中心和短编号；状态一次显示，坐标见工作台列表/原 JSON。
+
+    所有绘制都在副本上进行，不改变源图、像素/毫米结果或导出图尺寸。
+    """
+    annotated = draw_detections(frame, objects, reserved_top=52)
     status = f"Objects: {len(objects)}"
     if fps is not None:
         status += f" | FPS: {fps:.1f}"
     if paused:
         status += " | PAUSED"
     cv2.putText(annotated, status, (10, 24), cv2.FONT_HERSHEY_SIMPLEX,
+                0.6, (0, 0, 0), 4, cv2.LINE_AA)
+    cv2.putText(annotated, status, (10, 24), cv2.FONT_HERSHEY_SIMPLEX,
                 0.6, (255, 255, 255), 2, cv2.LINE_AA)
     if calibration_status:
+        cv2.putText(annotated, calibration_status, (10, 47), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5, (0, 0, 0), 3, cv2.LINE_AA)
         cv2.putText(annotated, calibration_status, (10, 47), cv2.FONT_HERSHEY_SIMPLEX,
                     0.5, (0, 255, 255), 1, cv2.LINE_AA)
     return annotated

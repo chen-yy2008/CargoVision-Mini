@@ -6,6 +6,9 @@ PROJECT_DIR = Path(__file__).resolve().parent
 OUTPUT_DIR = PROJECT_DIR / "outputs"
 DEFAULT_MIN_AREA = 300
 MAX_MIN_AREA = 100_000
+AREA_SLIDER_MAX = 5_000
+PREVIEW_SIZE = (960, 720)
+CAMERA_PREFERENCE_PATH = PROJECT_DIR / "local_settings" / "camera.json"
 MORPH_KERNEL_SIZE = 3
 
 # OpenCV 的 H 范围为 0~179，S/V 范围为 0~255。

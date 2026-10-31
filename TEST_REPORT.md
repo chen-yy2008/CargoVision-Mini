@@ -1,5 +1,54 @@
 # CargoVision 实际测试报告
 
+## Windows 使用体验优化 — 2026-10-31
+
+### 实际执行与结果
+
+继续使用原有 Windows x64 / Python 3.12.14 / OpenCV 4.12.0 / NumPy 2.2.6；没有新增第三方依赖。
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+.\.venv\Scripts\python.exe -m compileall -q main.py vision.py config.py camera_utils.py display.py calibration.py calibrate_plane.py calibrate_camera.py io_utils.py scripts tests
+.\.venv\Scripts\python.exe -m pip check
+.\.venv\Scripts\python.exe main.py --image samples/demo.png --no-display
+.\.venv\Scripts\python.exe main.py --image samples/demo.png --calibration samples/workplane_demo.json --no-display
+.\.venv\Scripts\python.exe main.py --list-cameras --scan-limit 3
+```
+
+| 项目 | 结果与边界 |
+| --- | --- |
+| unittest | **106 项通过，0 失败、0 跳过**；原有 74 项保留，新增 32 项设备/显示回归 |
+| compileall / pip check | 通过；依赖无冲突 |
+| 图片模式/合成毫米模式 | 均检测到 4 个目标，PNG 保留原始 640×480，JSON 保持 0.2；有效毫米点与原合成期望一致 |
+| 原生窗口初始化/缩放 | 960×720、800×500、1000×650 各连续刷新 4 次，图像区域尺寸稳定，未随帧改变窗口大小；缩放由程序模拟，不是人工鼠标验收 |
+| 原生关闭窗口 | 实际创建图像窗口后程序化关闭，主循环退出码 0 |
+| 密集目标 | 实际生成并查看 60 个合成目标的预览；短编号避让、信息区分页，无逐目标 UNCALIBRATED |
+| 实际设备探测 | 当前会话检测 0..2 时成功读到一个 DSHOW 设备，实际 640×480，驱动报告 FPS 未知；其他编号未能读取，不据此断言不存在 |
+| 实际设备短时检查 | 同一可读索引两次启动，各 6 帧预览后自动 Q；第二次不传 --camera，从临时偏好恢复相同索引/后端/尺寸，退出码均为 0 |
+
+实际设备检查没有保存摄像头照片，配置放在 `.cache` 下的临时目录并已清理，没有替用户改写正式 `local_settings/camera.json`。索引对应的物理型号/USB 身份未确认，也没有据此声称已完成全部实机交互或毫米精度验收。设备报告 FPS 未知时未伪造数字，循环 FPS 与驱动 FPS 分开。
+
+### 专项回归覆盖
+
+- 显式选择优先、本地偏好恢复、首次无偏好回退 0、保存中文路径、原子替换及失败保留旧配置、损坏配置明确拒绝、显式重新选择绕过损坏配置。
+- 保存的设备/后端失败时不改用其他编号或后端；枚举必须实际读到帧，所有探测句柄释放；打开成功但读帧失败时可继续探测同索引的其他后端。
+- 分辨率只按请求设置；设置前拒绝与标定冲突；检查实际帧尺寸，设备返回与请求不符时提示并记录实际值；故障路径释放句柄且不保存错误选择。
+- 4:3、16:9、竖图等比布局，小屏初始尺寸，窗口初始化只调整一次，预览缩放不改源数组/对象/毫米值/JSON。
+- 密集编号不越界、不相互覆盖，中心十字保护，极密时保留分页完整列表；像素/毫米/区域外状态、D 详细、[ ] 翻页和 +/- 1 px² 精调。
+- 原有 P/S/Q/Esc、Mask、图片、内参、四点平面映射和导出测试继续通过。旧 Mask 选择测试改为隔离画布绘制验证输入 Mask，新增测试独立验证实际画布几何。
+
+### 检查中修复
+
+密集小目标测试首次发现：标签只按框边缘寻找位置时，中心保护区可能挡住所有候选。已把候选向十字保护区外移动，小目标采用较短十字，并在空间不足时使用列表而不是强行叠加文字。回归通过。
+
+### 保持不变与待验收
+
+已逐一比较 create_masks / detect_objects / contour_center 的 AST，确认与改动前一致；calibration.py、calibrate_camera.py、io_utils.py 和误差统计数学代码也与改动前一致（忽略换行风格）。相机选择/显示代码独立放在 camera_utils.py 和 display.py，JSON schema 不变。本机配置、测试日志、缓存和实验输出均被 Git 忽略；不删除旧数据、不创建正式 Tag / Release。本次提交范围为 Windows 使用体验优化的源码、测试与文档，不包含本机设备偏好和实验输出。
+
+用户仍需确认：列表中的哪个编号确为 USB 摄像头、跨 PyCharm/PowerShell 重启偏好、拔出已选设备的行为、真实鼠标缩放、真实键盘/滑条、连续保存和长时间 FPS/稳定性。OpenCV 索引可能因插拔/重启而重排，当前实现无法永久绑定 Windows 物理设备，不能省略画面确认。V0.2 的真实标定/毫米精度仍需另行验收。
+
+---
+
 ## V0.2 开发版 — 2026-10-16
 
 ### 环境与实际执行

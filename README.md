@@ -31,8 +31,14 @@ python -m venv .venv
 ## 2. 启动
 
 ```powershell
-# 默认摄像头；也可尝试 --camera 1、--camera 2
-.\.venv\Scripts\python.exe main.py --camera 0
+# 先列出可读取图像的编号/后端（默认检测 0..4）
+.\.venv\Scripts\python.exe main.py --list-cameras
+
+# 首次按列表选择相机。1 / dshow 仅为示例，请核对画面确实来自 USB 摄像头
+.\.venv\Scripts\python.exe main.py --camera 1 --backend dshow
+
+# 之后直接运行即可恢复上次成功选择，PyCharm 不填 Parameters 时同样生效
+.\.venv\Scripts\python.exe main.py
 
 # 本地图片，显示窗口；仓库已包含固定样图
 .\.venv\Scripts\python.exe main.py --image samples/demo.png
@@ -59,7 +65,7 @@ python -m venv .venv
 1. 用 PyCharm 打开当前项目文件夹。
 2. 在项目 Python Interpreter 中添加本地已有解释器，选择项目根目录下的 `.venv\Scripts\python.exe`。
 3. 创建 `main.py` 的运行配置，Working directory 设置为当前项目根目录。
-4. Parameters 填 `--image samples/demo.png` 或 `--camera 0`，然后运行。
+4. 首次 Parameters 填 `--list-cameras` 检测，再填 `--camera N` 选择；成功后清空 Parameters 即可使用已保存的相机。图片模式仍填 `--image samples/demo.png`。
 5. 操作按键前点击 OpenCV 图像窗口，使其获得焦点；不要在 PyCharm 编辑器中按 S/Q。
 
 不需要安装其他 GUI 框架，也不要在同一个环境混装多个 `cv2` 包。
@@ -72,10 +78,17 @@ python -m venv .venv
 | P | 摄像头模式暂停/恢复；暂停时仍可调参和保存 |
 | S | 保存当前帧的彩色标注图及对应 JSON；可连续保存而不覆盖 |
 | Min area 滑条 | 实时调整最小轮廓面积，单位 px²；0 按 1 处理 |
+| + / = / - | 最小面积增加/减少 1 px²，便于精调 |
+| D | 切换精简/详细目标列表；详细模式额外显示检测框尺寸和面积 |
+| [ / ] | 目标列表上一页/下一页，目标较多时仍能查看全部像素与毫米坐标 |
 | View 滑条 = 0 | 显示彩色原图及标注 |
 | View = 1 / 2 / 3 | 显示红 / 绿 / 蓝 Mask，白色为被阈值选中的区域 |
 
-面积滑条范围为 0~100000，鼠标不易精调时可通过 `--min-area` 指定初值。Mask 展示的是颜色分割及形态学处理后的结果，**尚未按最小面积删除白点**；小白点仍可能显示，但不会进入目标列表。即使预览 Mask，S 也保存对应帧的彩色标注图。图片模式不显示 FPS，也无需暂停。
+面积滑条默认 0~5000，可用 `--area-max 20000` 扩展，也可用 `--min-area` 设置初值；旧的较大初值（最高 100000）仍接受，并自动扩展本次滑条范围。Mask 展示的是颜色分割及形态学处理后的结果，**尚未按最小面积删除白点**；小白点仍可能显示，但不会进入目标列表。即使预览 Mask，S 也保存对应帧的彩色标注图。图片模式不显示实时 FPS，也无需暂停。
+
+画面上默认只画边框、黑白十字和 R#1 / G#2 / B#3 等短编号；对应的原始像素坐标、有效毫米坐标在右侧列表显示。未标定状态只在顶部出现一次。密集到无法放下编号时允许省略少量图内编号，完整目标仍在可翻页列表和 JSON 中，不强行叠加文字。D 只改变列表详细程度，不改变算法、数据或导出设置。
+
+预览画布最大初始尺寸为 960×720，小屏幕会预留标题栏/滑条空间自动缩小；初始化后尊重手动窗口尺寸，原图居中等比例显示，空余区域补黑。窗口过窄时暂时收起右侧列表，放大即可查看。**预览缩放不参与检测/标定，导出 PNG 继续保持原始帧尺寸；完整坐标在未改 schema 的 JSON 中。** 保存成功/失败会在底部反馈，同时打印中文路径或错误原因。
 
 ## 5. 数据和已实现功能
 
@@ -113,6 +126,8 @@ CargoVision-Mini/
 ├── CargoVision_V0.2_Codex_Prompt.md  本版任务书
 ├── AGENTS.md                       长期工程约定
 ├── main.py                         CLI、摄像头循环、按键和简单窗口
+├── camera_utils.py                 可读设备枚举、本机偏好、采集设置和实际信息
+├── display.py                      等比显示、紧凑编号、分页目标信息区
 ├── config.py                       HSV、默认面积和路径
 ├── vision.py                       Mask、轮廓、质心和标注
 ├── io_utils.py                     中文路径图片读取、JSON 组装、成对导出
@@ -129,12 +144,15 @@ CargoVision-Mini/
 ├── samples/validation_example.csv  合成误差样例，需替换后才可评估实物
 ├── calibrations/                   真实标定配置，默认不上传
 ├── camera_photos/                  真实棋盘格照片，默认不上传
+├── local_settings/camera.json      自动生成的本机相机偏好，默认不上传
 ├── tests/
 │   ├── __init__.py
 │   ├── test_vision.py              检测、几何和实际文件读写测试
 │   ├── test_main.py                CLI 和模拟摄像头控制流程测试
 │   ├── test_calibration.py         H、区域、配置和坐标空间验证
 │   ├── test_calibration_tools.py   工具交互、内参和误差统计测试
+│   ├── test_camera_utils.py        设备选择、配置持久化、分辨率与故障回归
+│   ├── test_display.py             缩放、标签避让、分页和预览数据隔离
 │   └── calibration_fixtures.py     固定合成内参/投影点，非设备参数
 ├── outputs/.gitkeep                实验输出被 Git 忽略
 ├── requirements.txt
@@ -156,6 +174,8 @@ CargoVision-Mini/
 | 缺少 cv2 / numpy | 确认用项目解释器执行 `-m pip install -r requirements.txt` |
 | OpenCV DLL 加载失败 | 确认是 64 位 Python，检查 Microsoft Visual C++ 运行库；Windows N 版本还需检查媒体组件 |
 | 无法打开摄像头 | 检查编号、USB、Windows「隐私和安全性 → 相机」中的桌面应用权限，关闭相机/会议等占用程序 |
+| 上次设备不可用 | 不会切换到另一个编号；执行 `--list-cameras`，核对画面后用 `--camera N` 重选 |
+| 摄像头偏好损坏 | `--camera N` 显式重选会绕过损坏配置，成功读取后更新；也可手动移走 local_settings/camera.json |
 | 帧读取失败 | 检查断连、设备忙和驱动，程序会释放资源并退出；重新启动尝试 |
 | 图片不存在/解码失败 | 核对工作目录和文件名；确认文件是真实图片而非改扩展名的文本 |
 | 目标漏检 | 先查看对应 Mask；调整光照、`config.py` 的 HSV 或降低最小面积，然后重新运行 |
@@ -201,9 +221,12 @@ HSV 阈值需要现场调整，强反光、阴影和低饱和度会影响结果�
 5. **检查并检测**：运行 `--inspect` 核对尺寸、分辨率、四角、轴和 pixel_frame，再运行 `main.py --calibration ...`。关闭标定工具会释放相机，无需同时打开两个摄像头程序。
 
 ```powershell
-.\.venv\Scripts\python.exe calibrate_plane.py --camera 0 --width-mm 210 --height-mm 297 --output calibrations/desk_plane.json
+# 改为 --list-cameras 中确认的编号/后端，下面数值只是例子
+$CameraIndex = 1
+$CameraBackend = 'dshow'
+.\.venv\Scripts\python.exe calibrate_plane.py --camera $CameraIndex --backend $CameraBackend --width-mm 210 --height-mm 297 --output calibrations/desk_plane.json
 .\.venv\Scripts\python.exe calibrate_plane.py --inspect calibrations/desk_plane.json
-.\.venv\Scripts\python.exe main.py --camera 0 --calibration calibrations/desk_plane.json
+.\.venv\Scripts\python.exe main.py --camera $CameraIndex --backend $CameraBackend --calibration calibrations/desk_plane.json
 ```
 
 也可从真实照片点选，但后续检测必须保持相同相机设置、图像尺寸和空间，示例中的 `camera_photos/plane.png` 需要你自己准备：
@@ -251,8 +274,10 @@ Copy-Item samples/validation_example.csv outputs/validation_real.csv
 开启内参后必须**重新做平面标定**，两条命令都加载同一内参：
 
 ```powershell
-.\.venv\Scripts\python.exe calibrate_plane.py --camera 0 --intrinsics calibrations/camera.json --width-mm 210 --height-mm 297 --output calibrations/desk_undistorted.json
-.\.venv\Scripts\python.exe main.py --camera 0 --intrinsics calibrations/camera.json --calibration calibrations/desk_undistorted.json
+$CameraIndex = 1
+$CameraBackend = 'dshow'
+.\.venv\Scripts\python.exe calibrate_plane.py --camera $CameraIndex --backend $CameraBackend --intrinsics calibrations/camera.json --width-mm 210 --height-mm 297 --output calibrations/desk_undistorted.json
+.\.venv\Scripts\python.exe main.py --camera $CameraIndex --backend $CameraBackend --intrinsics calibrations/camera.json --calibration calibrations/desk_undistorted.json
 ```
 
 流程为 raw 帧 → `cv2.undistort`（保持原 K、原尺寸、不裁剪）→ 点选或颜色检测 → 同空间 H → 毫米坐标 → 标注与导出。raw 平面 H 不能用于 undistorted 图像。配置记录内参 id 和参数指纹，改写同 id 的参数也会拒绝混用；相机内参和工作平面标定都要求分辨率完全匹配。
@@ -266,3 +291,28 @@ Copy-Item samples/validation_example.csv outputs/validation_real.csv
 ```
 
 本次自动测试、合成图片和原生窗口程序化检查见 TEST_REPORT.md；**V0.2 真实内参、真实平面和毫米误差尚未实测**。源码断点建议从 LEARNING_GUIDE.md 的 V0.2 部分开始。
+
+## 13. Windows 摄像头偏好与分辨率
+
+`--list-cameras` 仅列出当前能实际读取一帧的编号、后端、真实帧宽高和设备报告 FPS，不保存照片/偏好。默认检测 0..4，设备较多时用 `--scan-limit 10`（最大 20）。设备忙、权限不足或驱动问题会使其暂时未被列出；探测失败编号时可能出现 OpenCV 原生驱动日志，以最终可读列表为准。
+
+成功启动摄像头、读到首帧且标定检查通过后，程序将索引、实际后端和实际分辨率写入项目根目录的 `local_settings/camera.json`。这个路径由程序文件位置决定，与 PowerShell/PyCharm 的工作目录无关，已加入 `.gitignore`。**首次无偏好时使用 0 并明确打印；它不代表已自动识别 USB。请先按列表逐个核对画面，再选择需要的 USB 摄像头。**
+
+后续直接运行 `main.py` 恢复该偏好，无需交互输入。`--camera N` 总是优先并在成功后更新偏好；显式新选择不继承另一台相机的采集设置。保存的后端会固定使用，打开或读帧失败不悄悄换编号/后端；可用 `--backend auto` 明确要求重新尝试后端，或使用列表中的 `--backend dshow/msmf`。
+
+此实现只保存 **OpenCV 索引＋后端**。OpenCV Python 没有可靠的通用 Windows 物理设备路径映射，因此不把 PnP 列表顺序猜成 OpenCV 编号，不显示未经证实的型号/USB 标识。插拔、重启、驱动或虚拟摄像头变化后，索引可能指向另一台设备；**程序不能保证检测这种重新编号**，每次启动均提示核对画面。需要永久物理设备绑定时应另行评估专用枚举实现，而不是宣称当前已做到。
+
+可选配置采集尺寸，两个参数必须一起指定：
+
+```powershell
+# 示例值必须适合实际设备；设备可能拒绝或返回别的尺寸
+.\.venv\Scripts\python.exe main.py --camera 1 --backend dshow --width 1280 --height 720
+```
+
+设置成功与否最终依据 `frame.shape`，不是只看 `cap.set()` 的返回值。设备拒绝请求会提示实际返回值；首帧实际尺寸被保存，下一次恢复同一尺寸。窗口上 `Capture WxH` 是实际输入尺寸；`Device FPS` 是驱动报告值，未知显示 unknown，顶部 FPS 是处理/显示循环测量值，二者不可混淆。不改焦距、变焦或设备帧率，也不默认强行设置新的采集分辨率。
+
+加载平面或内参配置时，请求尺寸与标定不符会在设置设备前拒绝；实际返回尺寸与标定不符也会由 V0.2 原有检查拒绝，不能静默缩放 H。即使尺寸相同，换相机或姿态变化后仍需重新验证/标定。
+
+四点工具也支持 `--backend`、`--width`、`--height`。如果识别使用了自定义采集尺寸，平面标定命令也必须指定相同设置，例如在第 9 节标定及识别命令上**同时**添加 `--width 1280 --height 720`，并核对双方打印的实际宽高；新工具不改写旧标定矩阵或本机摄像头偏好。
+
+本次不增加运行中热切换摄像头：Q 退出释放设备，再用 `--camera N` 重启选择即可。保存失败、设备故障和偏好写入失败都有中文提示；偏好无法写入时当前可读会话仍可继续，但不能宣称下次会记住。
