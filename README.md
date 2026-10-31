@@ -1,6 +1,10 @@
-# CargoVision Mini V0.2（开发版）
+# CargoVision Mini v0.2.0
 
-一个适合学习的 Python + OpenCV 桌面视觉原型：保留红绿蓝多目标像素识别，V0.2 增加四点工作平面毫米定位、独立棋盘格内参工具和独立验证点误差统计。V0.1 已通过用户实机验收并发布 `v0.1.0`；V0.2 的真实相机标定、毫米精度及新功能审查仍待用户完成，暂不创建 `v0.2.0` Tag 或 Release。
+一个适合学习的 Python + OpenCV 桌面视觉项目，定位为**已完成基本实机功能验证的平面视觉定位原型**。保留红绿蓝多目标像素识别，提供四点工作平面毫米定位、独立棋盘格内参工具和独立验证点误差统计。v0.2.0 按用户授权以早期视觉原型标准结束 V0.2 阶段，保留历史 v0.1.0。
+
+用户于 2026-10-31 确认：OV4689 USB 摄像头在 **640×480、约 30 FPS** 下正常稳定使用，HSV 多目标识别、真实四点平面标定、像素/毫米坐标输出、OUTSIDE ROI、UI、保存和基本交互通过验收。这些是用户本机反馈，Codex 未在本次发布收尾中重复实机验收；约 30 FPS 是用户报告的运行表现，不据此认定传感器曝光帧率。
+
+**已知限制**：缺少精密固定装置，尚无独立测量点的定量精度统计；真实棋盘格内参和畸变校正尚未验收，不承诺特定毫米精度或工业级性能。1280×720 曾出现黑屏，重新插拔后 640×480 恢复正常；本版以已验收的 640×480 为使用基线，更高分辨率不作为已验证稳定模式。
 
 **第一次真实标定可直接从第 9 节开始；棋盘格内参是第 11 节的可选进阶路径，不是四点标定的前置要求。**
 
@@ -196,7 +200,7 @@ HSV 阈值需要现场调整，强反光、阴影和低饱和度会影响结果�
 
 已执行测试与未验证项见 [TEST_REPORT.md](TEST_REPORT.md)，源码学习见 [LEARNING_GUIDE.md](LEARNING_GUIDE.md)，第三方来源见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
-用户已于 2026-10-15 确认 Windows 全部实机测试通过。以下清单保留，便于更换电脑、相机或后续迭代时重新验收：
+V0.1 的用户实机验收记录日期为 2026-10-15；v0.2.0 的基本功能验收与限制见本文开头和 TEST_REPORT.md。以下清单用于更换电脑、相机或后续迭代时重新验收，不代表每个项目都获得了新的定量测试结果：
 
 - [ ] 打开实际摄像头，观察 FPS 和空白背景的 0 目标。
 - [ ] 放入红、绿、蓝物体及两个分离的同色物体，核对框与中心。
@@ -206,7 +210,7 @@ HSV 阈值需要现场调整，强反光、阴影和低饱和度会影响结果�
 - [ ] Q / Esc / 关闭窗口后可重新打开相机。
 - [ ] 再次运行全部离线测试。
 
-代码保存在 [CargoVision-Mini 仓库](https://github.com/chen-yy2008/CargoVision-Mini) 的 `main` 分支，保留 `v0.1.0` Tag。V0.2 开发代码在可执行测试通过后按授权提交/推送；**等用户完成真实相机标定、毫米精度测试和代码审查后，再决定创建 `v0.2.0` Tag / Release**。
+代码保存在 [CargoVision-Mini 仓库](https://github.com/chen-yy2008/CargoVision-Mini) 的 `main` 分支，v0.2.0 使用附注 Tag 和 [GitHub Release](https://github.com/chen-yy2008/CargoVision-Mini/releases/tag/v0.2.0) 标记，保留历史 v0.1.0。用户明确同意本次以早期原型标准发布，独立点定量精度和真实内参校正继续列为未验收项，不以软件合成结果替代。
 
 提交前使用 `git status --short` / `git diff --cached` 检查内容。`.venv/`、缓存、临时文件、实验输出、审查 ZIP、常见本地凭证与私钥路径由 `.gitignore` 排除；不要把令牌直接写入源码或文档。
 
@@ -290,7 +294,7 @@ $CameraBackend = 'dshow'
 .\.venv\Scripts\python.exe -m pip check
 ```
 
-本次自动测试、合成图片和原生窗口程序化检查见 TEST_REPORT.md；**V0.2 真实内参、真实平面和毫米误差尚未实测**。源码断点建议从 LEARNING_GUIDE.md 的 V0.2 部分开始。
+v0.2.0 发布前全部 **129 项自动测试通过**。用户已完成真实平面标定及基本像素/毫米输出验收；**独立点定量毫米误差与真实内参/畸变校正仍未验收**。自动测试、用户反馈和历史开发检查分别记录于 TEST_REPORT.md；源码断点建议从 LEARNING_GUIDE.md 的 V0.2 部分开始。
 
 ## 13. Windows 摄像头偏好与分辨率
 
@@ -305,15 +309,15 @@ $CameraBackend = 'dshow'
 可选配置采集尺寸，两个参数必须一起指定：
 
 ```powershell
-# 示例值必须适合实际设备；设备可能拒绝或返回别的尺寸
-.\.venv\Scripts\python.exe main.py --camera 1 --backend dshow --width 1280 --height 720
+# 640×480 是当前 OV4689 的用户验收基线，编号/后端仍需核对；检查实际返回尺寸
+.\.venv\Scripts\python.exe main.py --camera 1 --backend dshow --width 640 --height 480
 ```
 
 设置成功与否最终依据 `frame.shape`，不是只看 `cap.set()` 的返回值。设备拒绝请求会提示实际返回值；首帧实际尺寸被保存，下一次恢复同一尺寸。窗口上 `Capture WxH` 是实际输入尺寸；`Device FPS` 是驱动报告值，未知显示 unknown，顶部 FPS 是处理/显示循环测量值，二者不可混淆。不改焦距或变焦，默认不设置设备帧率，也不强行切换默认采集分辨率；仅在显式 --fps 或恢复对应本机请求时设置帧率。
 
 加载平面或内参配置时，请求尺寸与标定不符会在设置设备前拒绝；实际返回尺寸与标定不符也会由 V0.2 原有检查拒绝，不能静默缩放 H。即使尺寸相同，换相机或姿态变化后仍需重新验证/标定。
 
-四点工具也支持 `--backend`、`--width`、`--height`、`--fourcc`、`--fps`。如果识别使用了自定义采集尺寸，平面标定命令也必须指定相同设置，例如在第 9 节标定及识别命令上**同时**添加 `--width 1280 --height 720`，并核对双方打印的实际宽高；新工具不改写旧标定矩阵或本机摄像头偏好。
+四点工具也支持 `--backend`、`--width`、`--height`、`--fourcc`、`--fps`。如果识别使用了自定义采集尺寸，平面标定命令也必须指定相同设置，例如在第 9 节标定及识别命令上**同时**添加 `--width 640 --height 480`，并核对双方打印的实际宽高；新工具不改写旧标定矩阵或本机摄像头偏好。
 
 本次不增加运行中热切换摄像头：Q 退出释放设备，再用 `--camera N` 重启选择即可。保存失败、设备故障和偏好写入失败都有中文提示；偏好无法写入时当前可读会话仍可继续，但不能宣称下次会记住。
 
@@ -324,14 +328,14 @@ $CameraBackend = 'dshow'
 ```powershell
 # 改为你已核对画面的 USB 编号；这里的 1 只是命令示例
 $CameraIndex = 1
-.\.venv\Scripts\python.exe scripts/probe_camera.py --camera $CameraIndex
+.\.venv\Scripts\python.exe scripts/probe_camera.py --camera $CameraIndex --sizes 640x480
 ```
 
-默认顺序尝试 DSHOW / MSMF × auto / MJPG / YUY2 × 640×480、1280×720、1920×1080、2560×1440、3840×2160，共 30 组。每组独立打开、预热 5 帧后测量 2 秒，总时限 15 秒。超时会结束该组子进程并回收设备，继续下一组；最慢可能约 8 分钟。Ctrl+C 可停止并保存已完成的报告。它只验证指定请求，**不枚举驱动完整能力列表**；更高尺寸可按设备说明用 `--sizes 4096x2160` 等单独尝试，不推断所有相机支持这些值。
+上面的命令限制为 640×480；若主动比较其他模式，可给 --sizes 添加尺寸，或省略 --sizes 使用完整候选列表。完整默认列表顺序尝试 DSHOW / MSMF × auto / MJPG / YUY2 × 640×480、1280×720、1920×1080、2560×1440、3840×2160，共 30 组。每组独立打开、预热 5 帧后测量 2 秒，总时限 15 秒。超时会结束该组子进程并回收设备，继续下一组；最慢可能约 8 分钟。Ctrl+C 可停止并保存已完成的报告。它只验证指定请求，**不枚举驱动完整能力列表**；更高尺寸可按设备说明用 `--sizes 4096x2160` 等单独尝试，不推断所有相机支持这些值。
 
 省略 `--camera` 时只使用已保存的编号；没有偏好则要求明确指定，不替你猜另一台设备。工具不写摄像头偏好，不保存照片；数值 JSON 默认写入项目 `outputs/camera_probe_*.json`，已被 Git 忽略。可用 `--output` 指定新文件，但拒绝覆盖已有报告。
 
-想更仔细复测候选模式，可以缩小范围、延长测量与总时限：
+若另行排查高分辨率，可缩小范围、延长测量与总时限；1280×720 已有黑屏反馈，不应把以下实验当作正常使用的前置步骤：
 
 ```powershell
 .\.venv\Scripts\python.exe scripts/probe_camera.py --camera $CameraIndex --backends dshow --formats auto mjpg yuy2 --sizes 640x480 1280x720 1920x1080 --seconds 5 --warmup 10 --timeout 25
@@ -356,21 +360,21 @@ $CameraIndex = 1
 
 ```powershell
 # 先测试不指定编码/FPS；不要把未经验证的 MJPG/30 FPS 当作默认保证
-.\.venv\Scripts\python.exe main.py --camera $CameraIndex --backend dshow --width 1280 --height 720 --fourcc auto
+.\.venv\Scripts\python.exe main.py --camera $CameraIndex --backend dshow --width 640 --height 480 --fourcc auto
 # 仅在检测报告和画面验证合适时，才使用类似的显式请求：
-# .\.venv\Scripts\python.exe main.py --camera $CameraIndex --backend dshow --width 1280 --height 720 --fourcc mjpg --fps 30
+# .\.venv\Scripts\python.exe main.py --camera $CameraIndex --backend dshow --width 640 --height 480 --fourcc mjpg --fps 30
 .\.venv\Scripts\python.exe main.py
 ```
 
 启动终端并列打印请求、属性与真实帧值，预览仍沿用原有工作台。首帧及标定检查通过后，本机配置保存**实际宽高/后端**，以及可选 `requested_fourcc`、`requested_fps`；后二者只保留“请求”语义，下一次仍须检查是否生效。旧配置无需迁移。`--fourcc auto` 清除保存的格式请求；要恢复完全不设置 FPS 的会话，可显式 `--camera N` 重选并省略 `--fps`（同时把要保留的后端/宽高写上）。设备索引选择、命令行优先级及保存失败处理保持原样。
 
-**当前环境的候选结论并非用户 USB 验收结论**：2026-10-31 保存的编号 0 无法以 DSHOW 打开；另测的编号 2/DSHOW 在 1280×720、auto 下多次纯采集约 24.75～29.54 FPS，其他已试自动尺寸约 1 FPS。MJPG/YUY2 请求后读帧失败，MSMF 打开失败；未请求 FPS 时驱动 FPS/FOURCC 未知；另测显式 --fps 30 时，驱动报告约 30、2 秒纯采集约 29.54 FPS，FOURCC 仍未知。可优先在自己的 USB 上比较 1280×720、DSHOW、auto，但应以你运行工具得到的结果为准，不能据此认定 USB 原生支持或锁定 30 FPS。完整结果与边界见 TEST_REPORT.md。
+**发布时以用户实机结果为准**：OV4689 已验收模式为 640×480、约 30 FPS；1280×720 有黑屏反馈，重新插拔后 640×480 正常。此前开发环境曾在未确认物理身份的编号 2 上测得 720p 数组和约 24.75～29.54 read FPS，这些历史记录保留在 TEST_REPORT.md，但不作为 OV4689 的 720p 稳定性或原生能力证明，也不再作为本版推荐基线。
 
 选好模式后保持相机安装、镜头、照明和工作平面固定，再进行第 9～11 节标定。平面工具必须显式使用同样的设备、后端、宽高、可选 FOURCC/FPS，例如：
 
 ```powershell
-.\.venv\Scripts\python.exe calibrate_plane.py --camera $CameraIndex --backend dshow --width 1280 --height 720 --fourcc auto --width-mm 210 --height-mm 297 --output calibrations/desk_720p.json
-.\.venv\Scripts\python.exe main.py --camera $CameraIndex --backend dshow --width 1280 --height 720 --fourcc auto --calibration calibrations/desk_720p.json
+.\.venv\Scripts\python.exe calibrate_plane.py --camera $CameraIndex --backend dshow --width 640 --height 480 --fourcc auto --width-mm 210 --height-mm 297 --output calibrations/desk_480p.json
+.\.venv\Scripts\python.exe main.py --camera $CameraIndex --backend dshow --width 640 --height 480 --fourcc auto --calibration calibrations/desk_480p.json
 ```
 
 210×297 mm 只是 A4 示例，须核对实物及四角方向。若用了内参，两条命令均加载同一份、同采集尺寸的 `--intrinsics`。工具不自动换算旧 H 或旧内参；尺寸冲突仍拒绝毫米输出。即使尺寸相同，更换后端/格式/FPS 引起视野、裁剪、清晰度变化也要重新验证独立点，必要时重做内参及平面标定。最后检查 P/S/Q、Mask、窗口缩放、原尺寸导出，再做长时间稳定性与毫米误差验收。
