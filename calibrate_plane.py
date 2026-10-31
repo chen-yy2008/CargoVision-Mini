@@ -13,7 +13,7 @@ from calibration import (CORNER_ORDER, create_plane_calibration, load_calibratio
 from config import PROJECT_DIR
 from io_utils import read_image
 from main import open_camera, window_is_open
-from camera_utils import capture_info, configure_capture
+from camera_utils import capture_info, configure_capture, describe_capture, validate_capture_format
 
 PLANE_WINDOW = "CargoVision Plane Calibration"
 HEADER_HEIGHT = 90
@@ -76,12 +76,14 @@ def select_plane(args, intrinsics=None):
             backend = args.backend.upper() if args.backend and args.backend != "auto" else None
             cap = open_camera(args.camera, backend) if backend else open_camera(args.camera)
             requested = {"width": args.width, "height": args.height} if args.width is not None else None
-            configure_capture(cap, requested, intrinsics=intrinsics)
+            fourcc = args.fourcc.upper() if args.fourcc and args.fourcc != "auto" else None
+            configure_capture(cap, requested, intrinsics=intrinsics, fourcc=fourcc, fps=args.fps)
             ok, raw = cap.read()
             if not ok or raw is None or raw.size == 0:
                 raise RuntimeError("摄像头帧读取失败，无法进行平面标定。")
             info = capture_info(cap, raw)
             print(f'平面标定实际采集：{info["width"]}×{info["height"]}，后端 {info["backend"]}。后续识别必须使用相同设备、后端和分辨率。')
+            print(describe_capture(info, {"size": requested, "requested_fourcc": fourcc, "requested_fps": args.fps}))
             if requested and requested != {"width": info["width"], "height": info["height"]}:
                 print("设备未返回请求的分辨率，将依据实际帧尺寸标定，请核对。")
             state["frame"] = undistort_frame(raw, intrinsics)
@@ -174,6 +176,8 @@ def main(argv=None):
     parser.add_argument("--backend", choices=("auto", "dshow", "msmf"), help="相机后端，应与识别时保持一致")
     parser.add_argument("--width", type=int, help="可选采集宽度 pixel（不是 width-mm）")
     parser.add_argument("--height", type=int, help="可选采集高度 pixel，须同时指定宽度")
+    parser.add_argument("--fourcc", choices=("auto", "mjpg", "yuy2"), help="可选请求格式，与识别时保持一致")
+    parser.add_argument("--fps", type=float, help="可选请求采集帧率 1~240，与识别时保持一致")
     parser.add_argument("--width-mm", type=float, help="TL→TR 实测边长，毫米")
     parser.add_argument("--height-mm", type=float, help="TL→BL 实测边长，毫米")
     parser.add_argument("--intrinsics", type=Path, help="可选相机内参，先去畸变再点选四角")
@@ -192,8 +196,9 @@ def main(argv=None):
             parser.error("--width 和 --height 必须一起指定。")
         if args.width is not None and not (1 <= args.width <= 16384 and 1 <= args.height <= 16384):
             parser.error("采集宽高必须在 1~16384 pixel 之间。")
-        if args.image is not None and (args.width is not None or args.backend is not None):
-            parser.error("图片标定不使用采集分辨率或后端参数。")
+        validate_capture_format(fps=args.fps)
+        if args.image is not None and any(value is not None for value in (args.width, args.backend, args.fourcc, args.fps)):
+            parser.error("图片标定不使用采集分辨率、后端或格式/FPS 参数。")
         positive_number(args.width_mm, "width_mm")
         positive_number(args.height_mm, "height_mm")
         intrinsics = load_calibration(args.intrinsics, "camera_intrinsics") if args.intrinsics else None

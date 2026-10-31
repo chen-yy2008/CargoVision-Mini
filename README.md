@@ -309,10 +309,68 @@ $CameraBackend = 'dshow'
 .\.venv\Scripts\python.exe main.py --camera 1 --backend dshow --width 1280 --height 720
 ```
 
-设置成功与否最终依据 `frame.shape`，不是只看 `cap.set()` 的返回值。设备拒绝请求会提示实际返回值；首帧实际尺寸被保存，下一次恢复同一尺寸。窗口上 `Capture WxH` 是实际输入尺寸；`Device FPS` 是驱动报告值，未知显示 unknown，顶部 FPS 是处理/显示循环测量值，二者不可混淆。不改焦距、变焦或设备帧率，也不默认强行设置新的采集分辨率。
+设置成功与否最终依据 `frame.shape`，不是只看 `cap.set()` 的返回值。设备拒绝请求会提示实际返回值；首帧实际尺寸被保存，下一次恢复同一尺寸。窗口上 `Capture WxH` 是实际输入尺寸；`Device FPS` 是驱动报告值，未知显示 unknown，顶部 FPS 是处理/显示循环测量值，二者不可混淆。不改焦距或变焦，默认不设置设备帧率，也不强行切换默认采集分辨率；仅在显式 --fps 或恢复对应本机请求时设置帧率。
 
 加载平面或内参配置时，请求尺寸与标定不符会在设置设备前拒绝；实际返回尺寸与标定不符也会由 V0.2 原有检查拒绝，不能静默缩放 H。即使尺寸相同，换相机或姿态变化后仍需重新验证/标定。
 
-四点工具也支持 `--backend`、`--width`、`--height`。如果识别使用了自定义采集尺寸，平面标定命令也必须指定相同设置，例如在第 9 节标定及识别命令上**同时**添加 `--width 1280 --height 720`，并核对双方打印的实际宽高；新工具不改写旧标定矩阵或本机摄像头偏好。
+四点工具也支持 `--backend`、`--width`、`--height`、`--fourcc`、`--fps`。如果识别使用了自定义采集尺寸，平面标定命令也必须指定相同设置，例如在第 9 节标定及识别命令上**同时**添加 `--width 1280 --height 720`，并核对双方打印的实际宽高；新工具不改写旧标定矩阵或本机摄像头偏好。
 
 本次不增加运行中热切换摄像头：Q 退出释放设备，再用 `--camera N` 重启选择即可。保存失败、设备故障和偏好写入失败都有中文提示；偏好无法写入时当前可读会话仍可继续，但不能宣称下次会记住。
+
+## 14. 标定前检查 USB 摄像头采集模式
+
+先退出 CargoVision、Windows 相机和其他占用设备的软件。用 `main.py --list-cameras` 列出可读编号，再逐个打开画面确认哪个是 USB；编号不是永久物理身份，不同后端的相同编号也不能直接认定为同一相机。
+
+```powershell
+# 改为你已核对画面的 USB 编号；这里的 1 只是命令示例
+$CameraIndex = 1
+.\.venv\Scripts\python.exe scripts/probe_camera.py --camera $CameraIndex
+```
+
+默认顺序尝试 DSHOW / MSMF × auto / MJPG / YUY2 × 640×480、1280×720、1920×1080、2560×1440、3840×2160，共 30 组。每组独立打开、预热 5 帧后测量 2 秒，总时限 15 秒。超时会结束该组子进程并回收设备，继续下一组；最慢可能约 8 分钟。Ctrl+C 可停止并保存已完成的报告。它只验证指定请求，**不枚举驱动完整能力列表**；更高尺寸可按设备说明用 `--sizes 4096x2160` 等单独尝试，不推断所有相机支持这些值。
+
+省略 `--camera` 时只使用已保存的编号；没有偏好则要求明确指定，不替你猜另一台设备。工具不写摄像头偏好，不保存照片；数值 JSON 默认写入项目 `outputs/camera_probe_*.json`，已被 Git 忽略。可用 `--output` 指定新文件，但拒绝覆盖已有报告。
+
+想更仔细复测候选模式，可以缩小范围、延长测量与总时限：
+
+```powershell
+.\.venv\Scripts\python.exe scripts/probe_camera.py --camera $CameraIndex --backends dshow --formats auto mjpg yuy2 --sizes 640x480 1280x720 1920x1080 --seconds 5 --warmup 10 --timeout 25
+# 另测 MSMF：先核对该后端下的设备编号，再用 --backends msmf
+# 若需比较明确的 30 FPS 请求，在同一命令末尾加 --fps 30
+```
+
+每组报告严格分开以下证据：
+
+| 字段 | 含义 |
+| --- | --- |
+| requested | 设备编号、请求后端/宽高/格式/FPS；auto 不主动设置 FOURCC，省略 fps 不设置帧率 |
+| set_results | 各属性设置返回值，仅说明驱动是否确认；true 不等于实际生效，false 也不证明当前帧一定不是这个尺寸 |
+| properties_after_set / actual.properties / last_properties | 设置后、首个测量帧后、最后一帧后的属性读回值；FPS、FOURCC 可能未知，或反映后端转换后的格式 |
+| actual.width / actual.height、size_counts | 来自真实 `frame.shape` 的像素尺寸及各尺寸的帧数；不靠窗口大小或软件 resize 冒充高分辨率 |
+| measured_read_fps / frames / sample_seconds | 预热后 `(帧数−1)/(末帧完成时刻−首帧完成时刻)`；少于两帧时 FPS 为 null |
+| status / exact_resolution | read_ok 表示此次测量读帧成功且所有测量帧尺寸精确匹配；size_mismatch 表示读到其他尺寸，error/timeout/worker_error 须查看原因 |
+
+`read_ok` 不代表所有属性生效，也不代表稳定性或标定验收。纯采集 read FPS 不含目标检测/预览，不等于窗口处理 FPS 或传感器曝光帧率；驱动缓冲/重复帧可能影响结果。返回 4K 帧不证明传感器原生 4K，也不证明清晰度提高。工具不调整曝光、对焦或图像转换逻辑。
+
+确认模式后，使用已有宽高参数加可选格式/FPS 启动工作台：
+
+```powershell
+# 先测试不指定编码/FPS；不要把未经验证的 MJPG/30 FPS 当作默认保证
+.\.venv\Scripts\python.exe main.py --camera $CameraIndex --backend dshow --width 1280 --height 720 --fourcc auto
+# 仅在检测报告和画面验证合适时，才使用类似的显式请求：
+# .\.venv\Scripts\python.exe main.py --camera $CameraIndex --backend dshow --width 1280 --height 720 --fourcc mjpg --fps 30
+.\.venv\Scripts\python.exe main.py
+```
+
+启动终端并列打印请求、属性与真实帧值，预览仍沿用原有工作台。首帧及标定检查通过后，本机配置保存**实际宽高/后端**，以及可选 `requested_fourcc`、`requested_fps`；后二者只保留“请求”语义，下一次仍须检查是否生效。旧配置无需迁移。`--fourcc auto` 清除保存的格式请求；要恢复完全不设置 FPS 的会话，可显式 `--camera N` 重选并省略 `--fps`（同时把要保留的后端/宽高写上）。设备索引选择、命令行优先级及保存失败处理保持原样。
+
+**当前环境的候选结论并非用户 USB 验收结论**：2026-10-31 保存的编号 0 无法以 DSHOW 打开；另测的编号 2/DSHOW 在 1280×720、auto 下多次纯采集约 24.75～29.54 FPS，其他已试自动尺寸约 1 FPS。MJPG/YUY2 请求后读帧失败，MSMF 打开失败；未请求 FPS 时驱动 FPS/FOURCC 未知；另测显式 --fps 30 时，驱动报告约 30、2 秒纯采集约 29.54 FPS，FOURCC 仍未知。可优先在自己的 USB 上比较 1280×720、DSHOW、auto，但应以你运行工具得到的结果为准，不能据此认定 USB 原生支持或锁定 30 FPS。完整结果与边界见 TEST_REPORT.md。
+
+选好模式后保持相机安装、镜头、照明和工作平面固定，再进行第 9～11 节标定。平面工具必须显式使用同样的设备、后端、宽高、可选 FOURCC/FPS，例如：
+
+```powershell
+.\.venv\Scripts\python.exe calibrate_plane.py --camera $CameraIndex --backend dshow --width 1280 --height 720 --fourcc auto --width-mm 210 --height-mm 297 --output calibrations/desk_720p.json
+.\.venv\Scripts\python.exe main.py --camera $CameraIndex --backend dshow --width 1280 --height 720 --fourcc auto --calibration calibrations/desk_720p.json
+```
+
+210×297 mm 只是 A4 示例，须核对实物及四角方向。若用了内参，两条命令均加载同一份、同采集尺寸的 `--intrinsics`。工具不自动换算旧 H 或旧内参；尺寸冲突仍拒绝毫米输出。即使尺寸相同，更换后端/格式/FPS 引起视野、裁剪、清晰度变化也要重新验证独立点，必要时重做内参及平面标定。最后检查 P/S/Q、Mask、窗口缩放、原尺寸导出，再做长时间稳定性与毫米误差验收。

@@ -10,7 +10,8 @@ try:
     import cv2
     from calibration import (add_workplane_coordinates, load_calibration, undistort_frame)
     from camera_utils import (capture_info, choose_camera, configure_capture, list_cameras,
-                              load_camera_preference, open_camera, save_camera_preference)
+                              load_camera_preference, open_camera, save_camera_preference,
+                              describe_capture, validate_capture_format)
     from config import (AREA_SLIDER_MAX, CAMERA_PREFERENCE_PATH, DEFAULT_MIN_AREA, MAX_MIN_AREA,
                         PREVIEW_MODES, PREVIEW_SIZE, WINDOW_NAME)
     from display import initial_preview_size, render_workbench
@@ -32,6 +33,8 @@ def parse_args(argv=None):
     parser.add_argument("--backend", choices=("auto", "dshow", "msmf"), help="视频后端；默认沿用本机偏好或自动选择")
     parser.add_argument("--width", type=int, help="请求采集宽度 pixel，必须与 --height 一起使用")
     parser.add_argument("--height", type=int, help="请求采集高度 pixel；检查设备实际返回值")
+    parser.add_argument("--fourcc", choices=("auto", "mjpg", "yuy2"), help="可选请求格式；auto 不设置格式并覆盖本机偏好")
+    parser.add_argument("--fps", type=float, help="可选请求采集帧率 1~240；不保证驱动接受")
     parser.add_argument("--calibration", type=Path, help="四点工作平面标定 JSON；不提供时只输出像素")
     parser.add_argument("--intrinsics", type=Path, help="可选相机内参 JSON，先去畸变再检测")
     parser.add_argument("--min-area", type=int, default=DEFAULT_MIN_AREA,
@@ -53,8 +56,12 @@ def parse_args(argv=None):
         parser.error("--width 和 --height 必须一起指定。")
     if args.width is not None and not (1 <= args.width <= 16384 and 1 <= args.height <= 16384):
         parser.error("采集宽高必须在 1~16384 pixel 之间。")
-    if args.image is not None and (args.width is not None or args.backend is not None):
-        parser.error("--width / --height / --backend 只用于摄像头。")
+    try:
+        validate_capture_format(fps=args.fps)
+    except ValueError as exc:
+        parser.error(str(exc))
+    if args.image is not None and any(value is not None for value in (args.width, args.backend, args.fourcc, args.fps)):
+        parser.error("--width / --height / --backend / --fourcc / --fps 只用于摄像头。")
     if (args.no_display or args.save) and args.image is None:
         parser.error("--no-display 和 --save 仅用于 --image 图片模式。")
     args.camera_explicit = args.camera is not None
@@ -117,7 +124,10 @@ def prepare_camera_choice(args):
     preference = None if args.camera_explicit else load_camera_preference(CAMERA_PREFERENCE_PATH)
     backend = args.backend.upper() if args.backend and args.backend != "auto" else None
     requested_size = {"width": args.width, "height": args.height} if args.width is not None else None
-    choice = choose_camera(args.camera if args.camera_explicit else None, preference, backend, requested_size)
+    fourcc = args.fourcc.upper() if args.fourcc and args.fourcc != "auto" else None
+    choice = choose_camera(args.camera if args.camera_explicit else None, preference, backend, requested_size, fourcc, args.fps)
+    if args.fourcc == "auto":
+        choice.pop("requested_fourcc", None)
     if args.backend == "auto":
         choice["backend"] = None
     args.camera = choice["index"]
@@ -207,7 +217,8 @@ def run_camera(args) -> int:
     choice = args.camera_choice
     cap = open_camera(args.camera, choice["backend"]) if choice["backend"] else open_camera(args.camera)
     try:
-        configure_capture(cap, choice["size"], args.plane_data, args.intrinsics_data)
+        configure_capture(cap, choice["size"], args.plane_data, args.intrinsics_data,
+                          fourcc=choice.get("requested_fourcc"), fps=choice.get("requested_fps"))
         create_window(args.min_area, args.area_max)
         paused, frame, timestamp = False, None, None
         fps, previous_time = 0.0, None
@@ -235,11 +246,14 @@ def run_camera(args) -> int:
                 if not startup_complete:
                     reported = f'{info["reported_fps"]:.1f}' if info["reported_fps"] is not None else "未知"
                     print(f'实际采集：{info["width"]}×{info["height"]}，后端 {info["backend"]}，设备报告 FPS {reported}（循环 FPS 见窗口）。')
+                    print(describe_capture(info, choice))
                     if choice["size"] is not None and choice["size"] != {"width": info["width"], "height": info["height"]}:
                         print("提示：实际分辨率与请求不同；以实际帧为准，已有标定不匹配时程序会拒绝毫米输出。")
                     fps_label = reported if info["reported_fps"] is not None else "unknown"
                     args.ui["source_label"] = f'Camera {args.camera} | {info["backend"]} | Device FPS {fps_label}'
                     try:
+                        for setting in ("requested_fourcc", "requested_fps"):
+                            info[setting] = choice.get(setting)
                         save_camera_preference(CAMERA_PREFERENCE_PATH, args.camera, info)
                     except OSError as exc:
                         print(f"本机摄像头偏好保存失败：{exc}", file=sys.stderr)

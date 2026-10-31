@@ -210,6 +210,19 @@ class CameraMainTests(unittest.TestCase):
         self.assertIn("实际分辨率与请求不同", output)
         self.assertEqual(camera_utils.load_camera_preference(self.path)["capture_size"], {"width": 640, "height": 480})
 
+    def test_requested_format_and_fps_restore_without_reselecting_device(self):
+        status, cap, _, _, output, _ = self.run_camera(["--camera", "2", "--fourcc", "mjpg", "--fps", "30"])
+        self.assertEqual(status, 0)
+        cap.set.assert_any_call(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+        cap.set.assert_any_call(cv2.CAP_PROP_FPS, 30)
+        self.assertIn("属性读回", output)
+        status, cap, opened, _, _, _ = self.run_camera([])
+        self.assertEqual(status, 0)
+        opened.assert_called_once_with(2, "DSHOW")
+        self.assertEqual(cap.set.call_count, 4)
+        saved = camera_utils.load_camera_preference(self.path)
+        self.assertEqual((saved["requested_fourcc"], saved["requested_fps"]), ("MJPG", 30))
+
     def test_calibration_resolution_conflict_releases_without_saving(self):
         status, cap, _, preview, _, error = self.run_camera(["--camera", "1", "--width", "1280", "--height", "720",
             "--calibration", str(PROJECT_DIR / "samples" / "workplane_demo.json")])

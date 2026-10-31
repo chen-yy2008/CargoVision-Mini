@@ -52,3 +52,11 @@ OpenCV/NumPy 的二进制包可能携带其他组件的条款，例如媒体组�
 - 参考 [VideoCapture 属性文档](https://docs.opencv.org/4.12.0/d4/d15/group__videoio__flags__base.html) 及 [Windows DirectShow 官方实现](https://github.com/opencv/opencv/blob/4.12.0/modules/videoio/src/cap_dshow.cpp)：区分请求设置、实际帧尺寸、驱动报告帧率与循环帧率；不假定后端索引永久绑定物理设备。
 - 选择索引＋实际后端的本机偏好，不使用 PnP 列表顺序来猜 OpenCV 编号；真正的物理设备路径映射需要额外验证，当前不声称已实现。未复制上游源码，没有增加依赖，继续沿用已有 wheel 的完整许可。
 - 屏幕工作区只通过 Windows 标准 API 和 Python 标准库 ctypes 查询；紧凑标注、列表分页和等比画布为本项目显示代码，不更改视觉算法或标定数学。
+
+## 采集模式检查调查（2026-10-31）
+
+继续使用 OpenCV 4.12.0.88 / NumPy 2.2.6，无新增包。参考 [官方属性说明](https://docs.opencv.org/4.12.0/d4/d15/group__videoio__flags__base.html)、[DSHOW 4.12.0 源码](https://github.com/opencv/opencv/blob/4.12.0/modules/videoio/src/cap_dshow.cpp)、[MSMF 4.12.0 源码](https://github.com/opencv/opencv/blob/4.12.0/modules/videoio/src/cap_msmf.cpp)，沿用 VideoCapture.set/get/read、VideoWriter_fourcc；不引入额外设备管理库或 FFmpeg 可执行文件。官方成熟实现已覆盖所需读帧与模式请求，新增部分仅为参数组织、计时及报告。
+
+属性设置会经过硬件、驱动和后端多层，不能从 set 成功推出真实能力；DSHOW 可在尺寸设置后按 FOURCC 重新协商，MSMF 的属性也可能表示转换后的输出，不能拿它证明 USB 链路原生格式。项目独立验证 frame.shape 和预热后 read 时间。通用 OpenCV Python API 不提供完整的原生模式清单，因此工具明确采用有限候选请求，不声称完成驱动全部能力枚举。
+
+已检查官方仓库及具体文件头：主库采用 Apache-2.0，Windows 后端还含各自历史来源/许可声明（例如 DSHOW 的 Intel/BSD 风格声明、MSMF 的 videoInput/CPOL 来源说明），继续适用现有 wheel 随附的完整许可。这里只参考行为并调用已安装公开 API，没有复制这些文件或第三方示例源码，不把主库许可证当作所有历史代码的唯一条款。子进程限时、JSON 与计时使用 Python 标准库，自行编写，不引入新许可证兼容性负担。

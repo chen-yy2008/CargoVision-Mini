@@ -13,6 +13,15 @@ import tempfile
 import cv2
 
 BACKENDS = {"DSHOW": cv2.CAP_DSHOW, "MSMF": cv2.CAP_MSMF, "ANY": cv2.CAP_ANY}
+FOURCC_CHOICES = ("MJPG", "YUY2")
+
+
+def validate_capture_format(fourcc=None, fps=None):
+    """校验可选格式与请求帧率（frame/s）；None 表示不设置，非法值抛 ValueError。"""
+    if fourcc is not None and fourcc not in FOURCC_CHOICES:
+        raise ValueError("采集格式只支持 MJPG / YUY2，或不指定。")
+    if fps is not None and (type(fps) not in (int, float) or not math.isfinite(fps) or not 1 <= fps <= 240):
+        raise ValueError("请求 FPS 必须是 1~240 之间的有限数值。")
 
 
 def open_camera(index, backend=None):
@@ -51,20 +60,26 @@ def load_camera_preference(path):
         size = data.get("capture_size")
         if not isinstance(size, dict) or any(type(size.get(key)) is not int or size[key] <= 0 for key in ("width", "height")):
             raise ValueError("capture_size 无效")
+        validate_capture_format(data.get("requested_fourcc"), data.get("requested_fps"))
         return data
     except (ValueError, UnicodeError, TypeError) as exc:
         raise ValueError(f"本地摄像头偏好损坏：{path}。请用 --camera N 显式重新选择，或移走此配置后重试。") from exc
 
 
-def choose_camera(explicit_index, preference=None, backend=None, size=None):
+def choose_camera(explicit_index, preference=None, backend=None, size=None, fourcc=None, fps=None):
     """纯函数：CLI 优先于偏好；无偏好才使用 0。返回索引、后端、请求尺寸和来源。
 
     显式选择索引时不沿用另一台相机的后端/分辨率；隐式启动恢复已保存设置。
     """
     saved = explicit_index is None and preference is not None
-    return {"index": preference["camera_index"] if saved else (explicit_index if explicit_index is not None else 0),
+    choice = {"index": preference["camera_index"] if saved else (explicit_index if explicit_index is not None else 0),
             "backend": backend or (preference["backend"] if saved else None),
             "size": size or (preference["capture_size"] if saved else None), "from_preference": saved}
+    for key, value in (("requested_fourcc", fourcc), ("requested_fps", fps)):
+        value = value if value is not None else (preference.get(key) if saved else None)
+        if value is not None:
+            choice[key] = value
+    return choice
 
 
 def save_camera_preference(path, index, info):
@@ -73,6 +88,11 @@ def save_camera_preference(path, index, info):
     data = {"version": 1, "identity_kind": "opencv_index_only", "camera_index": index,
             "backend": info["backend"] if info["backend"] in BACKENDS else None,
             "capture_size": {"width": info["width"], "height": info["height"]}}
+    # 格式/FPS 保留“请求”语义，不把驱动属性读回值或测得的吞吐率伪装成设置。
+    validate_capture_format(info.get("requested_fourcc"), info.get("requested_fps"))
+    for key in ("requested_fourcc", "requested_fps"):
+        if info.get(key) is not None:
+            data[key] = info[key]
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = None
     try:
@@ -86,21 +106,53 @@ def save_camera_preference(path, index, info):
             temporary.unlink(missing_ok=True)
 
 
-def configure_capture(cap, size=None, plane=None, intrinsics=None):
+def configure_capture(cap, size=None, plane=None, intrinsics=None, fourcc=None, fps=None):
     """可选请求采集宽高（pixel）；已有标定与请求尺寸不符时，在 set 前拒绝。
 
     set 返回成功不等于相机接受设置，调用者仍必须以实际 frame.shape 检查。
-    不设置帧率、焦距或任何默认分辨率，不静默调整已有标定。
+    fourcc 为 MJPG/YUY2，fps 单位 frame/s；仅显式请求时设置。不改焦距/变焦。
+    返回各属性 set 的布尔结果（只是驱动确认，不是实际能力证明）。
     """
-    if size is None:
-        return
+    validate_capture_format(fourcc, fps)
     for calibration in (plane, intrinsics):
-        if calibration is not None and calibration["image_size"] != size:
+        if size is not None and calibration is not None and calibration["image_size"] != size:
             raise ValueError("请求采集分辨率与已有标定不一致，未更改设备设置。请重新验证/标定，或使用原分辨率。")
-    accepted_w = cap.set(cv2.CAP_PROP_FRAME_WIDTH, size["width"])
-    accepted_h = cap.set(cv2.CAP_PROP_FRAME_HEIGHT, size["height"])
-    if not accepted_w or not accepted_h:
-        print("提示：设备未确认接受分辨率设置，将检查实际返回的图像尺寸。")
+    if size is not None or fourcc is not None or fps is not None:
+        print("提示：采集模式请求/恢复后，请核对视野、清晰度及独立验证点；模式改变可能需要重新标定。")
+    settings = []
+    if size is not None:
+        settings.extend((("width", cv2.CAP_PROP_FRAME_WIDTH, size["width"]),
+                         ("height", cv2.CAP_PROP_FRAME_HEIGHT, size["height"])))
+    # DSHOW 可在宽高更新后按 FOURCC 重新协商媒体类型；全套设置后再读帧验收。
+    # MSMF 可能返回转换后的格式，无法凭 FOURCC 属性证明 USB 链路的原生格式。
+    if fourcc is not None:
+        settings.append(("fourcc", cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*fourcc)))
+    if fps is not None:
+        settings.append(("fps", cv2.CAP_PROP_FPS, fps))
+    accepted = {name: bool(cap.set(prop, value)) for name, prop, value in settings}
+    if not all(accepted.values()):
+        print("提示：设备未确认接受部分采集设置，将检查属性读回及实际返回的图像尺寸。")
+    return accepted
+
+
+def capture_properties(cap):
+    """读取驱动属性（尺寸为 pixel，FPS 为 frame/s）；未知/非有限值返回 None。
+
+    属性不是 frame.shape，也不是实测帧率；FOURCC 可能是后端转换后的输出格式。
+    """
+    values = {}
+    for name, prop in (("width", cv2.CAP_PROP_FRAME_WIDTH), ("height", cv2.CAP_PROP_FRAME_HEIGHT),
+                       ("fps", cv2.CAP_PROP_FPS), ("fourcc_code", cv2.CAP_PROP_FOURCC)):
+        try:
+            value = float(cap.get(prop))
+            values[name] = value if math.isfinite(value) and value > 0 else None
+        except (cv2.error, TypeError, ValueError):
+            values[name] = None
+    code = values["fourcc_code"]
+    code = int(code) if code is not None and code <= 0xFFFFFFFF else 0
+    chars = "".join(chr((code >> (8 * i)) & 255) for i in range(4))
+    values["fourcc"] = chars if all(32 <= ord(c) <= 126 for c in chars) else None
+    return values
 
 
 def capture_info(cap, frame):
@@ -115,13 +167,19 @@ def capture_info(cap, frame):
             backend = "UNKNOWN"
     except (cv2.error, AttributeError):
         backend = "UNKNOWN"
-    try:
-        reported_fps = float(cap.get(cv2.CAP_PROP_FPS))
-        if not math.isfinite(reported_fps) or reported_fps <= 0:
-            reported_fps = None
-    except (cv2.error, TypeError, ValueError):
-        reported_fps = None
-    return {"width": width, "height": height, "backend": backend, "reported_fps": reported_fps}
+    properties = capture_properties(cap)
+    return {"width": width, "height": height, "backend": backend, "reported_fps": properties["fps"],
+            "properties": properties}
+
+
+def describe_capture(info, choice):
+    """生成中文请求/属性/真实帧报告；不改输入，不将驱动 FPS 当成实测 FPS。"""
+    props = info["properties"]
+    return (f'请求采集：{choice.get("size") or "设备默认尺寸"}，'
+            f'FOURCC {choice.get("requested_fourcc") or "不设置"}，FPS {choice.get("requested_fps") or "不设置"}；'
+            f'属性读回：{props["width"]}×{props["height"]}，FOURCC {props["fourcc"] or "未知"}，FPS {props["fps"]}；'
+            f'真实帧：{info["width"]}×{info["height"]}，后端 {info["backend"]}。'
+            '属性读回不证明原生格式/FPS 已生效，纯采集实测请运行 scripts/probe_camera.py。')
 
 
 def list_cameras(limit=5, backend=None):

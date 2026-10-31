@@ -216,10 +216,22 @@ rmse = np.sqrt(np.mean(dx_mm ** 2 + dy_mm ** 2))
 
 `camera_utils.choose_camera()` 是可断点观察的纯选择函数：显式参数优先，其次本机偏好，无偏好才使用 0。`load_camera_preference()` 对损坏配置明确报错；`save_camera_preference()` 在实际首帧及标定检查通过后原子写入。索引不是物理设备身份，插拔后仍需核对画面，不能把某个编号永远称为 USB 摄像头。
 
-`configure_capture()` 只在用户请求（或恢复已保存尺寸）时设置宽高。先比较标定尺寸，再调用 cap.set；最终以 `capture_info()` 中来自 frame.shape 的实际宽高为准。请在 choice、请求 size 和首帧 info 处设断点，观察“请求成功”与“实际生效”的区别。
+`configure_capture()` 只在用户请求（或恢复本机设置）时设置宽高及可选格式/FPS。先比较标定尺寸，再调用 cap.set；最终以 `capture_info()` 中来自 frame.shape 的实际宽高为准。请在 choice、请求 size 和首帧 info 处设断点，观察“请求成功”与“实际生效”的区别。
 
 `display.fit_image_rect()` 使用 `min(可用宽/原宽, 可用高/原高)` 求比例，再居中补黑；检测、去畸变、H 和 JSON 从不使用这个显示比例。`render_workbench()` 对预览建立独立的几何副本，原 center_px/center_mm 不回写；UI 的 page 会随可显示页数钳制，这是显式显示状态。
 
 `label_layout()` 尝试把短编号放在框周围，避免相互重叠或遮住十字。极密区域无法在有限像素里显示所有文字，就保留框和中心，完整编号/坐标移到分页列表。原尺寸导出 PNG 也采用短编号；详细值继续完整保存在 JSON。核心检测 create_masks/detect_objects/contour_center 和 calibration.py 的数学均保持不变。
 
 可以做三个小实验：改变预览窗口宽高比，对比导出 image_size 和坐标不变；在 60 目标合成预览中按 [ ] 翻页；用模拟配置比较显式 --camera 与偏好优先级。不要为了学习配置而改写用户真实设备数据，测试使用临时目录或 .cache。
+
+## 16. 采集参数为什么要核对三次
+
+`camera_utils.configure_capture()` 的 size 单位为 pixel，fourcc 为 MJPG/YUY2 或 None，fps 为 frame/s 或 None。先在任何 set 之前比较标定尺寸，再申请宽高、格式和帧率；参数为空则不设置该属性。断点看 settings 和 accepted：accepted 只是驱动返回值，不是验证结果。没有新增曝光、自动对焦或图像缩放设置。
+
+`camera_utils.capture_properties()` 读取驱动声明的宽高/FPS/FOURCC，未知值转换为 None。`capture_info()` 则另从 frame.shape 取真实宽高；`describe_capture()` 把请求、属性、真实帧并列显示。如果属性显示 1920×1080，数组却是 640×480，后者才是检测和标定所使用的像素空间。
+
+`scripts/probe_camera.py:measure_mode()` 丢弃预热帧，记录每次 read 完成的时刻和尺寸。看 timestamps、sizes、result；FPS 用 (N−1)/(t_last−t_first)，只有一帧不伪造帧率。这个数字是纯采集吞吐率，可能受驱动缓冲或重复内容影响，不是传感器曝光频率，更不是 main.py 内含识别和 UI 的循环 FPS。
+
+`run_isolated()` 每次用相同 Python 启动一个模式检测，父进程给 open/set/read/release 整个流程设置时限。正常或失败由 finally release，驱动卡住时结束子进程让系统回收句柄；不会为了凑一组成功结果偷换编号。工具只写数值报告；`main.py` 仍在成功首帧且标定检查通过后保存本机偏好，其中格式/FPS 明确叫 requested_*，不把实测吞吐率存成下次设置。
+
+三个学习实验：①在 test_capture_modes.py 的模拟摄像头中让 set 返回 true、属性显示 1280×720、数组返回 640×480，确认报告为 size_mismatch；②保持数组大小不变，让属性 FPS=30、完成时刻每隔 0.5 秒，确认测得 2 FPS；③在真实设备上仅改变预览窗口大小，比较报告中的真实采集尺寸不变，然后比较两种采集尺寸的独立毫米验证点。第三项需要用户本机设备与实测尺量，不能用合成测试替代。
