@@ -1,0 +1,2 @@
+# CMD 在 Windows 上需要 CRLF；避免克隆后双击入口中文提示被错误解析。
+Start_CargoVision.cmd text eol=crlf

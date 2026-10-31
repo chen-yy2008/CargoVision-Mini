@@ -60,3 +60,9 @@ OpenCV/NumPy 的二进制包可能携带其他组件的条款，例如媒体组�
 属性设置会经过硬件、驱动和后端多层，不能从 set 成功推出真实能力；DSHOW 可在尺寸设置后按 FOURCC 重新协商，MSMF 的属性也可能表示转换后的输出，不能拿它证明 USB 链路原生格式。项目独立验证 frame.shape 和预热后 read 时间。通用 OpenCV Python API 不提供完整的原生模式清单，因此工具明确采用有限候选请求，不声称完成驱动全部能力枚举。
 
 已检查官方仓库及具体文件头：主库采用 Apache-2.0，Windows 后端还含各自历史来源/许可声明（例如 DSHOW 的 Intel/BSD 风格声明、MSMF 的 videoInput/CPOL 来源说明），继续适用现有 wheel 随附的完整许可。这里只参考行为并调用已安装公开 API，没有复制这些文件或第三方示例源码，不把主库许可证当作所有历史代码的唯一条款。子进程限时、JSON 与计时使用 Python 标准库，自行编写，不引入新许可证兼容性负担。
+
+## v0.3 第一阶段启动器方案调查
+
+优先检查成熟官方实现：[CPython tkinter 源码](https://github.com/python/cpython/tree/3.12/Lib/tkinter)、[Python 3.12 Tkinter/ttk 官方文档](https://docs.python.org/3.12/library/tkinter.html)、[subprocess 官方文档](https://docs.python.org/3.12/library/subprocess.html)。采用 Windows 官方 Python 常见附带的 Tcl/Tk 8.6 和标准库 ttk、文件选择、消息框、剪贴板、after 事件调度；当前环境实际创建窗口验证为 Tk 8.6。不引入 Qt/PySide、Pillow 或第三方 launcher 框架，避免安装体积和额外依赖。相机预览继续调用已有 OpenCV API，不复制外部摄像头枚举代码。
+
+CPython 标准库遵循其 [PSF 及随附历史许可](https://github.com/python/cpython/blob/v3.12.0/LICENSE)，Tcl/Tk 使用其分发随附的许可；本项目仅调用已安装接口，未复制官方或其他仓库源码，也不重新打包 Python/Tcl/Tk 二进制。启动器、配置及进程组织代码为本项目独立实现；现有 OpenCV/NumPy 许可记录继续适用，requirements.txt 无变化。缺少 Tkinter 时明确提示用户准备现有环境，不自动下载/安装或修改系统配置。

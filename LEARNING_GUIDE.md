@@ -235,3 +235,15 @@ rmse = np.sqrt(np.mean(dx_mm ** 2 + dy_mm ** 2))
 `run_isolated()` 每次用相同 Python 启动一个模式检测，父进程给 open/set/read/release 整个流程设置时限。正常或失败由 finally release，驱动卡住时结束子进程让系统回收句柄；不会为了凑一组成功结果偷换编号。工具只写数值报告；`main.py` 仍在成功首帧且标定检查通过后保存本机偏好，其中格式/FPS 明确叫 requested_*，不把实测吞吐率存成下次设置。
 
 三个学习实验：①在 test_capture_modes.py 的模拟摄像头中让 set 返回 true、属性显示 1280×720、数组返回 640×480，确认报告为 size_mismatch；②保持数组大小不变，让属性 FPS=30、完成时刻每隔 0.5 秒，确认测得 2 FPS；③在真实设备上仅改变预览窗口大小，比较报告中的真实采集尺寸不变，然后比较两种采集尺寸的独立毫米验证点。第三项需要用户本机设备与实测尺量，不能用合成测试替代。
+
+## 17. 启动器：从界面到已有 CLI
+
+先从 `Start_CargoVision.cmd` 看环境检查，再读 `launcher_config.py`。`initial_settings()` 返回设置、上次实际偏好和错误列表；首次采集请求仍是 640×480。“上次成功”不等于本次已读，更不是 USB 物理身份。`validate_settings()` 区分 pixel、px² 和 mm；`save_settings()` 的临时文件替换保证失败不破坏原配置，不保存现场确认勾选。
+
+`calibration_state()` 复用已有校验，返回平面/内参状态及当前文件内容指纹和采集键。`build_command()` 将普通字典转为 argv 列表；断点看 state、signature、command。标定文件合法且分辨率一致，只说明软件上能配套；是否仍是同一安装位置和工作平面，需要用户确认。改变文件内容或采集参数后，旧 signature 不能继续授权毫米输出。新标定宽高 mm 只传给 calibrate_plane.py，不用于偷偷修改已选 H。
+
+`launcher.py:Launcher.start_process()` 用项目虚拟环境和 shell=False 运行已有入口，不拼接 shell 字符串；带中文/空格的路径是单独参数。`Launcher.poll()` 用 Tk after 检查日志、退出状态及扫描/预览超时，不在 Tk 事件回调里读相机；正常结束恢复按钮。日志写文件，避免子进程 PIPE 填满后死锁。`Launcher.update_actual()` 只采用本次新写出的成功偏好，旧文件不能冒充本次采集。
+
+`launcher_worker.py:preview_camera()` 只预览相机，C 确认、Q 取消；frame.shape 决定实际像素尺寸，缩放仅用于显示。worker 不直接写用户相机偏好，父窗口收到 confirmed 才保存；异常 finally 释放摄像头，驱动阻塞时父窗口可结束子进程。检测和标定仍由原 main.py / calibrate_plane.py 完成，窗口中的算法没有重写。
+
+建议三个实验：①用 tests/test_launcher.py 中的模拟偏好记录 1280×720，观察首次请求仍为 640×480、上次实际记录仍明确显示 720p；②复制合成标定文件，在 GUI 确认后修改其 id，再启动，观察旧确认撤销；③用模拟失败子进程验证中文错误与按钮恢复，再用正常合成图片子进程看到 4 个目标、valid 状态。以上测试不修改真实标定或相机配置；真实 USB 的预览确认和毫米验收由用户单独进行。

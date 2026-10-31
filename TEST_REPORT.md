@@ -1,5 +1,47 @@
 # CargoVision 实际测试报告
 
+## v0.3 第一阶段：简易启动器（开发工作区，未发布）
+
+### 软件实际检查
+
+在 v0.2.0 最终提交 c526cc7 上增量开发，开始时工作区干净。环境为 Windows x64、Python 3.12.14、OpenCV 4.12.0、NumPy 2.2.6、Tk 8.6；没有增加第三方依赖。
+
+| 检查 | 实际结果与边界 |
+| --- | --- |
+| 全部 unittest | **163 项通过，0 失败、0 跳过**；原有 129 项保留，新增启动器测试 34 项 |
+| 配置与命令组装 | 默认 640×480、不猜相机、继承成功偏好、旧配置恢复、损坏文件明确报错、原子替换失败保留旧文件、参数单位/范围、路径空格中文、确认状态不持久化均通过 |
+| 标定保护 | 复用 V0.2 文件/尺寸/raw/内参关联检查；缺文件/失配拒绝启动，文件变化撤销会话确认，不静默降级为像素模式 |
+| 原生 Tk 测试 | 实际创建控件并操作参数表单、保存恢复、确认勾选、诊断复制、按钮状态、进程失败/取消/超时和退出回收；相机帧及多数子进程为模拟对象 |
+| 实际子进程回归 | 从启动器进程管理启动原 main.py 的合成图片+合成平面无窗口流程，4 个目标、valid 状态，正常返回启动器；不是实机毫米精度结果 |
+| Windows 双击入口正常路径 | 通过 cmd.exe 实际调用 Start_CargoVision.cmd，使用已有 .venv/pythonw 打开原生启动器，再程序化关闭；正式 camera.json / launcher.json 前后逐字节一致。窗口截图已查看，中文按钮、尺寸和标定状态可见 |
+| 缺环境路径 | 在中文/空格临时目录复制入口、不提供 .venv，实际 cmd.exe 返回 1，显示中文缺环境提示，没有安装或创建虚拟环境 |
+| 预览子进程 | 模拟帧验证 C 确认、Q/Esc/关闭取消、真实 shape 报告、读帧失败与关闭竞态时释放设备；模拟异常有中文诊断 |
+| 编译/依赖/Git | compileall、pip check、git diff --check 通过；.gitattributes 为 CMD 固定 CRLF，避免克隆后中文批处理解析错误 |
+
+实际执行：
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests -q
+.\.venv\Scripts\python.exe -m compileall -q launcher.py launcher_config.py launcher_worker.py main.py camera_utils.py vision.py calibration.py scripts tests
+.\.venv\Scripts\python.exe -m pip check
+```
+
+### 设备访问与尚未验收内容
+
+本阶段曾尝试独立预览编号 2/DSHOW，设备打开失败，启动器显示中文失败提示且没有采用未确认的选择。**用户随后明确说明 USB 相机未插上，要求先不处理设备；此后不再探测或尝试打开相机。** 因此这个结果不视为 USB 功能故障，也不构成成功预览/实机验收；没有声称看到了 USB 实时画面、完成了人工 C 确认或真实毫米链路。
+
+需要用户接入 USB 后验收：双击入口 → 选择实际 USB 编号并预览确认 → 640×480 实际尺寸 → 选择已有真实标定及配套内参（如适用）→ 确认现场条件 → 开始检测查看真实像素/毫米与 OUTSIDE ROI → P/S/Q/Mask/保存 → 退出重启恢复设置。还需检查拔出设备、错误诊断复制和退出后重新打开设备。v0.2.0 已记录的独立点定量精度、真实内参与畸变校正限制继续保留。
+
+### 范围与开发中修复
+
+新增 launcher.py、launcher_config.py、launcher_worker.py、Start_CargoVision.cmd 及测试、说明；原 main.py、vision.py、display.py、calibration.py、camera_utils.py、calibrate_plane.py、calibrate_camera.py、io_utils.py、requirements.txt 和历史测试均未修改。检测、标定数学、CLI、快捷键及 JSON schema 保持原样。
+
+Windows 入口测试最初发现 LF 换行导致中文缺环境提示不能正确解析，已改为 CRLF 并设置专用 Git 属性；窗口关闭时的预览竞态按取消处理；本次实际尺寸只采用进程新写出的成功信息，避免把旧偏好误报为本次采集。所有软件回归通过。
+
+设置保存在被忽略的 local_settings/，诊断与内部状态文件在被忽略的 .cache/launcher/；实际照片、标定及输出仍按既有规则留在本机。未迁移或删除用户实验数据。本阶段按用户授权提交/推送开发代码用于备份，真实 USB 启动器验收仍待完成；未创建正式 v0.3 Tag 或 Release，v0.2.0/v0.1.0 历史不变。
+
+---
+
 ## v0.2.0 正式发布验收记录 — 2026-10-31
 
 ### 定位及验收来源
