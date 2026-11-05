@@ -247,3 +247,13 @@ rmse = np.sqrt(np.mean(dx_mm ** 2 + dy_mm ** 2))
 `launcher_worker.py:preview_camera()` 只预览相机，C 确认、Q 取消；frame.shape 决定实际像素尺寸，缩放仅用于显示。worker 不直接写用户相机偏好，父窗口收到 confirmed 才保存；异常 finally 释放摄像头，驱动阻塞时父窗口可结束子进程。检测和标定仍由原 main.py / calibrate_plane.py 完成，窗口中的算法没有重写。
 
 建议三个实验：①用 tests/test_launcher.py 中的模拟偏好记录 1280×720，观察首次请求仍为 640×480、上次实际记录仍明确显示 720p；②复制合成标定文件，在 GUI 确认后修改其 id，再启动，观察旧确认撤销；③用模拟失败子进程验证中文错误与按钮恢复，再用正常合成图片子进程看到 4 个目标、valid 状态。以上测试不修改真实标定或相机配置；真实 USB 的预览确认和毫米验收由用户单独进行。
+
+## 18. v0.4-A1：轮廓质心与旋转矩形几何
+
+入口仍是 `vision.py:detect_objects()`。原 HSV、轮廓面积筛选、排序、`contour_center()` 均按原方式执行；新函数 `rotated_rect_geometry()` 仅从该轮廓计算可选元数据。输入 N×1×2 或 N×2 轮廓，输出普通字典；中心/角点/长短边为浮点 pixel，长宽比无单位，角度单位 degree。原外层 center_px 是轮廓矩质心，新增内层 center_px 是包围矩形中心：L 形目标二者明显不同，不能拿新中心替换旧毫米映射输入。
+
+在 `rect`、`corners`、`edges`、`long_axis`、`aspect_ratio` 设断点。minAreaRect 求最小面积矩形，boxPoints 给四顶点；按相对中心的 atan2 递增排序，在 Y 向下的图像中就是顺时针，再将 (y,x) 最小的点移到首位。选实际最长边求 atan2(dy,dx)，用 `(角度+90)%180-90` 去掉头尾差异，所以竖直对应 -90°；不直接依赖 OpenCV 返回角随宽高交换而变化的表达。
+
+独立常量 `ORIENTATION_MIN_ASPECT_RATIO=1.10`：长边/短边 >= 阈值才报告 angle_deg，否则 orientation_valid=False、angle_deg=None（JSON null）。这不是物体分类或精度承诺。点/直线没有有效短边，NaN/Infinity 也不允许进入 JSON；函数对退化/非有限轮廓返回 None，检测列表不因缺少可选几何而改变。
+
+三个离线实验：①对 tests/test_vision.py 的合成矩形依次取 0°、30°、90°、110°，观察输出方向为 0°、约30°、-90°、约-70°；②保持短边100 pixel，将长边从109改到110，观察方向可靠性门槛；③比较 L 形目标的外层质心与内层矩形中心，再执行原毫米映射，确认仍使用外层质心。角点可能超出图像边界，不能靠裁切或取整“修正”矩形；本阶段不做几何的毫米转换。

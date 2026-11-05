@@ -1,6 +1,8 @@
-# CargoVision Mini（v0.3 第一阶段开发中）
+# CargoVision Mini（v0.4-A1 目标几何信息开发分支）
 
-当前工作区在已发布 v0.2.0 上增量加入**简易中文启动器**。已有项目 `.venv` 时，双击根目录的 **Start_CargoVision.cmd** 即可选择/预览摄像头、调整参数、选择标定并打开检测，不必修改 PyCharm 参数或 JSON。启动器使用标准库 Tkinter，不自动安装或修改环境；完整步骤见第 15 节。本阶段尚待用户 Windows 实机验收，未创建正式 v0.3 Tag / Release。
+本分支以 main 的 `c31e756` 为基线，仅在原 HSV/轮廓检测结果上附加旋转矩形几何信息，约定见第 5 节。开发分支为 `feature/v0.4-geometry`，不合并 main，不创建正式 Tag 或 Release。
+
+基线已包含**简易中文启动器**。已有项目 `.venv` 时，双击根目录的 **Start_CargoVision.cmd** 即可选择/预览摄像头、调整参数、选择标定并打开检测，不必修改 PyCharm 参数或 JSON。启动器使用标准库 Tkinter，不自动安装或修改环境；完整步骤见第 15 节。启动器尚待用户 Windows 实机验收，v0.4-A1 不修改其功能。
 
 以下是 v0.2.0 视觉基线的定位与实机验收边界，启动器不改变这些检测与标定能力：
 
@@ -117,6 +119,44 @@ V0.2 JSON 使用 `schema_version: "0.2"`，保留 `coordinate_system: "image_pix
 - `workplane_coordinate_system: "workplane_mm"`：声明新增毫米字段的语义，不表示已经标定。
 - `calibration.status`：无平面配置时为 `uncalibrated`；有效时为 `valid`，并记录标定 id、原点、轴、矩形尺寸、分辨率和内参关联指纹。
 - 每个目标的 `mm_status`：`valid` / `uncalibrated` / `outside_roi` / `invalid_transform`。**只有 valid 时才附带 `center_mm: {"x": ..., "y": ...}`**。未标定或区域外不填零、不伪造毫米坐标。
+
+### v0.4-A1 可选几何字段
+
+每个已通过原面积筛选的目标，附加 `geometry.rotated_rect_px`。继续使用 `schema_version: "0.2"`，原 `id/color/center_px/bbox_xywh/contour_area_px2/center_mm/mm_status` 的字段名称、存在条件和计算方式不变。读取者应忽略不认识的可选嵌套字段；旧对象没有 geometry 时仍可正常导出。
+
+以下仅为合成的水平矩形示例，不是实机测量：
+
+```json
+{
+  "geometry": {
+    "rotated_rect_px": {
+      "center_px": {"x": 120.0, "y": 100.0},
+      "long_side_px": 160.0,
+      "short_side_px": 60.0,
+      "aspect_ratio": 2.6666666666666665,
+      "angle_deg": 0.0,
+      "orientation_valid": true,
+      "corners_px": [
+        {"x": 40.0, "y": 70.0},
+        {"x": 200.0, "y": 70.0},
+        {"x": 200.0, "y": 130.0},
+        {"x": 40.0, "y": 130.0}
+      ]
+    }
+  }
+}
+```
+
+| 字段 | 具体约定 |
+| --- | --- |
+| center_px | 旋转矩形中心，浮点 pixel；不是对象外层原有的轮廓矩质心，不用于替换毫米映射的输入 |
+| long_side_px / short_side_px | minAreaRect 的两条边取大/小值，浮点 pixel；按几何长度计算，不是包含端点的 bbox 像素计数 |
+| aspect_ratio | 长边 / 短边，无单位，非退化时 >= 1 |
+| angle_deg | 由 boxPoints 的实际长边向量 atan2(dy,dx) 计算；以 +X 为零，X 向右、Y 向下，正值在图像中顺时针；无头尾长轴统一到 **[-90°,90°)**，竖直为 -90° |
+| orientation_valid | 当 aspect_ratio **>= 1.10** 时为 true；阈值在 vision.py 独立常量 ORIENTATION_MIN_ASPECT_RATIO 管理。圆形、近正方形等低于阈值时为 false，angle_deg 为 **null** |
+| corners_px | 四个浮点 {x,y}，按图像顺时针排列；起点是实际浮点坐标中 y 最小的顶点，y 相同时取 x 最小。它不是标定四角的 TL/TR/BR/BL 标签，也不保证跨帧角点身份连续 |
+
+几何属于当前检测图像的 raw / undistorted 像素空间，和 `pixel_frame` 一致；本次不转换角点、边长或角度到毫米/机械坐标，不增加画面标注或操作。靠近图像边缘时，数学上的最小外接矩形可能伸出画面、包含负坐标；保留原浮点结果，不裁切角点以免破坏矩形。长宽比仅是方向稳定性的简单门槛，不是类别或精度置信度。空白/过滤掉的噪点仍无目标；退化或非有限几何不附加此字段，不输出 NaN/Infinity。
 
 旧命令、像素检测和按键继续可用，读取 JSON 的外部程序需要识别显式升级的 0.2 schema。`v0.1.0` 历史版本仍保留 0.1 schema。CLI 发现配置损坏、分辨率不符或 raw/undistorted 混用时会报错退出，不静默缩放 H 或保存虚假毫米结果。
 

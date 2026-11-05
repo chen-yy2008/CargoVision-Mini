@@ -66,3 +66,9 @@ OpenCV/NumPy 的二进制包可能携带其他组件的条款，例如媒体组�
 优先检查成熟官方实现：[CPython tkinter 源码](https://github.com/python/cpython/tree/3.12/Lib/tkinter)、[Python 3.12 Tkinter/ttk 官方文档](https://docs.python.org/3.12/library/tkinter.html)、[subprocess 官方文档](https://docs.python.org/3.12/library/subprocess.html)。采用 Windows 官方 Python 常见附带的 Tcl/Tk 8.6 和标准库 ttk、文件选择、消息框、剪贴板、after 事件调度；当前环境实际创建窗口验证为 Tk 8.6。不引入 Qt/PySide、Pillow 或第三方 launcher 框架，避免安装体积和额外依赖。相机预览继续调用已有 OpenCV API，不复制外部摄像头枚举代码。
 
 CPython 标准库遵循其 [PSF 及随附历史许可](https://github.com/python/cpython/blob/v3.12.0/LICENSE)，Tcl/Tk 使用其分发随附的许可；本项目仅调用已安装接口，未复制官方或其他仓库源码，也不重新打包 Python/Tcl/Tk 二进制。启动器、配置及进程组织代码为本项目独立实现；现有 OpenCV/NumPy 许可记录继续适用，requirements.txt 无变化。缺少 Tkinter 时明确提示用户准备现有环境，不自动下载/安装或修改系统配置。
+
+## v0.4-A1 几何提取方案调查（2026-11-05）
+
+参考 [OpenCV 官方形状 API：minAreaRect / boxPoints](https://docs.opencv.org/4.x/d3/dc0/group__imgproc__shape.html) 和 [固定版本 4.12.0 rotcalipers.cpp](https://github.com/opencv/opencv/blob/4.12.0/modules/imgproc/src/rotcalipers.cpp)，采用已有成熟旋转卡尺实现求矩形，不自行重写求解器。4.x 文档站当前可能跳到更新的 4.13，实际实现和离线测试均使用项目原有 OpenCV 4.12.0.88 / NumPy 2.2.6，没有升级依赖。
+
+已检查官方源码头的 BSD 风格历史许可，继续适用 wheel 完整第三方许可记录；只调用已安装公开 API，没有复制源码、示例图或外部算法。项目自行实现长轴归一化、顶点起点约定和长宽比可靠性门槛。选择从顶点长边求角而不直接沿用 API 原角度，避免宽高交换表达影响项目约定；保留边界外的真实矩形角点，不将其裁切成别的形状。没有新增第三方包或复用其他许可证不明的实现。

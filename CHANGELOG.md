@@ -1,5 +1,13 @@
 # 更新日志
 
+## [Unreleased] — v0.4-A1：目标几何信息，2026-11-05
+
+- 在 main c31e756 基线上新建 feature/v0.4-geometry，仅对已检测目标附加可选 geometry.rotated_rect_px。
+- 使用 OpenCV minAreaRect / boxPoints 提供浮点中心、长短边、长宽比、无向长轴角、图像顺时针四角；角度统一 [-90°,90°)，起点按 (y,x) 字典序确定。
+- 独立长宽比阈值 1.10 管理方向可靠性；不可靠方向为 false/null，退化/非有限几何不导出，无 NaN/Infinity。
+- 保留原轮廓矩质心、HSV、面积筛选、毫米映射、JSON 0.2 和所有旧字段，不修改启动器/采集/标定/操作方式，不增加依赖。
+- 增加 15 项离线几何与兼容测试；不合并 main，不创建 PR、Tag 或 Release。
+
 ## [Unreleased] — v0.3 第一阶段：简易可视化启动器
 
 - 新增 Windows 双击入口，检查并使用项目已有 .venv；缺环境给中文诊断，不静默安装或更新。
