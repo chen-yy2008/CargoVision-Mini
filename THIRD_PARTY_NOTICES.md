@@ -72,3 +72,9 @@ CPython 标准库遵循其 [PSF 及随附历史许可](https://github.com/python
 参考 [OpenCV 官方形状 API：minAreaRect / boxPoints](https://docs.opencv.org/4.x/d3/dc0/group__imgproc__shape.html) 和 [固定版本 4.12.0 rotcalipers.cpp](https://github.com/opencv/opencv/blob/4.12.0/modules/imgproc/src/rotcalipers.cpp)，采用已有成熟旋转卡尺实现求矩形，不自行重写求解器。4.x 文档站当前可能跳到更新的 4.13，实际实现和离线测试均使用项目原有 OpenCV 4.12.0.88 / NumPy 2.2.6，没有升级依赖。
 
 已检查官方源码头的 BSD 风格历史许可，继续适用 wheel 完整第三方许可记录；只调用已安装公开 API，没有复制源码、示例图或外部算法。项目自行实现长轴归一化、顶点起点约定和长宽比可靠性门槛。选择从顶点长边求角而不直接沿用 API 原角度，避免宽高交换表达影响项目约定；保留边界外的真实矩形角点，不将其裁切成别的形状。没有新增第三方包或复用其他许可证不明的实现。
+
+## v0.4-A2 绘图方案调查（2026-11-05）
+
+参考 [OpenCV官方绘图API](https://docs.opencv.org/4.x/d6/d6e/group__imgproc__draw.html) 和 [4.12.0 drawing.cpp](https://github.com/opencv/opencv/blob/4.12.0/modules/imgproc/src/drawing.cpp)，继续使用已有 polylines、line、circle、drawMarker 和 putText。采用BGR青/洋红/黄色及抗锯齿描画；边界裁剪仅作用在显示画布，不修改JSON。有限值、字段完整性和绘图整数范围检查由本项目自行组织；防御性凸多边形检查复用isContourConvex，不重新拟合A1旋转矩形。
+
+未复制上游源码或图像，没有增加包或升级OpenCV；4.x文档可能跳到较新版本，实际回归在现有4.12.0.88上执行。继续适用既有wheel随附的完整许可，不引入新GUI框架或更改已有算法许可边界。

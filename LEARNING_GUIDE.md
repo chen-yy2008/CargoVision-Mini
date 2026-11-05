@@ -257,3 +257,15 @@ rmse = np.sqrt(np.mean(dx_mm ** 2 + dy_mm ** 2))
 独立常量 `ORIENTATION_MIN_ASPECT_RATIO=1.10`：长边/短边 >= 阈值才报告 angle_deg，否则 orientation_valid=False、angle_deg=None（JSON null）。这不是物体分类或精度承诺。点/直线没有有效短边，NaN/Infinity 也不允许进入 JSON；函数对退化/非有限轮廓返回 None，检测列表不因缺少可选几何而改变。
 
 三个离线实验：①对 tests/test_vision.py 的合成矩形依次取 0°、30°、90°、110°，观察输出方向为 0°、约30°、-90°、约-70°；②保持短边100 pixel，将长边从109改到110，观察方向可靠性门槛；③比较 L 形目标的外层质心与内层矩形中心，再执行原毫米映射，确认仍使用外层质心。角点可能超出图像边界，不能靠裁切或取整“修正”矩形；本阶段不做几何的毫米转换。
+
+## 19. v0.4-A2：源几何与绘图坐标的边界
+
+先读 `display.py:geometry_for_display()`：它只防御性读取A1字段，返回显示用的新数组/普通值，不再调用minAreaRect或重新判断1.10门槛。空/坏字段返回None分量；方向线还要求True标志、有限角度及完整合法几何。不完整目标仍可画合法框/中心，详情用N/A；不会为了显示改写原JSON。
+
+`draw_detections(frame, objects, source_size=None)` 的 objects 始终是源图坐标。原尺寸导出不传source_size，比例为1；`render_workbench()` 在resize后传入原图宽高。函数内部只为旧框/质心建立局部缩放字典；`draw_rotated_geometry()` 则直接读原几何，经 `_drawing_points()` 生成新的整数点。断点看 source_size、sx/sy、geometry、endpoints；原 center_px、center_mm、corners_px 和长短边均不赋新值。
+
+可靠轴先在源空间用 `中心 ± 长边/2 × (cos(angle), sin(angle))` 求两端，再和四角、矩形中心一起乘同一个sx/sy。整数resize可能使sx/sy略不同，不能把角度和预览长边直接拼回一个新源矩形。画布偏移来自等比补黑区域的摆放；OpenCV只裁绘图结果，原负角点不做clamp。取整只在交给绘图API前发生。
+
+原黑白十字最后画，保留原质心；洋红空心圆是另一种中心。青色四边形沿原角点序闭合，不当作TL/TR/BR/BL。方向false/null不画黄色轴，也不显示假角。`render_workbench()` 的D列表读取原对象并按7行/126 pixel分页；简洁模式保持原密度，Mask路径完全绕过标注函数。
+
+三个实验：①将同一640×480结果分别放入960×720和800×500画布，对比JSON文本完全一致，观察绘图点按真实resize变化；②用L形样本分开看白十字和洋红圆，再看D列表两种中心；③把geometry删掉或将angle设为None，确认旧标注/有效框仍在、黄色轴消失。实验只改合成对象副本；S导出PNG应仍为原帧尺寸，毫米输入仍为旧质心。

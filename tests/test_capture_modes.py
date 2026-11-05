@@ -10,6 +10,8 @@ import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
+from tests.camera_fixtures import make_camera
+
 import cv2
 import numpy as np
 
@@ -48,21 +50,20 @@ class CaptureModeTests(unittest.TestCase):
 
     def test_invalid_request_does_not_set_any_property(self):
         for options in ({"fourcc": "H264"}, {"fps": float("nan")}, {"fps": 0}, {"fps": True}):
-            cap = MagicMock()
+            cap = make_camera()
             with self.subTest(options=options), self.assertRaises(ValueError):
                 camera_utils.configure_capture(cap, **options)
             cap.set.assert_not_called()
 
     def test_calibration_conflict_blocks_format_and_fps_too(self):
-        cap = MagicMock()
+        cap = make_camera()
         with self.assertRaisesRegex(ValueError, "未更改设备"):
             camera_utils.configure_capture(cap, {"width": 1280, "height": 720},
                 plane={"image_size": {"width": 640, "height": 480}}, fourcc="MJPG", fps=30)
         cap.set.assert_not_called()
 
     def test_properties_and_real_frame_are_separate(self):
-        cap = MagicMock()
-        cap.getBackendName.return_value = "MSMF"
+        cap = make_camera()
         props = {cv2.CAP_PROP_FRAME_WIDTH: 1920, cv2.CAP_PROP_FRAME_HEIGHT: 1080,
                  cv2.CAP_PROP_FPS: 30, cv2.CAP_PROP_FOURCC: cv2.VideoWriter_fourcc(*"YUY2")}
         cap.get.side_effect = props.__getitem__
@@ -75,9 +76,9 @@ class CaptureModeTests(unittest.TestCase):
         self.assertIn("不证明", text)
 
     def test_unknown_properties_are_json_safe(self):
-        cap = MagicMock()
+        cap = make_camera()
         for value in (float("nan"), float("inf"), 0, -1, None):
-            cap.get.return_value = value
+            cap.get.side_effect = lambda prop: value
             props = camera_utils.capture_properties(cap)
             self.assertTrue(all(value is None for value in props.values()))
             json.dumps(props, allow_nan=False)
@@ -104,10 +105,8 @@ class CaptureModeTests(unittest.TestCase):
             calibrate_plane.main(["--image", "demo.png", "--width-mm", "210", "--height-mm", "297", "--fourcc", "mjpg"])
 
     def test_plane_tool_passes_same_mode_to_capture_and_releases(self):
-        cap = MagicMock()
+        cap = make_camera()
         cap.read.return_value = (True, np.zeros((720, 1280, 3), np.uint8))
-        cap.get.return_value = 0
-        cap.getBackendName.return_value = "DSHOW"
         with patch("calibrate_plane.open_camera", return_value=cap), patch("calibrate_plane.cv2.namedWindow"), \
                 patch("calibrate_plane.cv2.setMouseCallback"), patch("calibrate_plane.cv2.destroyAllWindows"), \
                 patch("calibrate_plane.window_is_open", return_value=False), redirect_stdout(io.StringIO()):
@@ -125,10 +124,9 @@ class ProbeTests(unittest.TestCase):
                 "fourcc": "MJPG", "fps": 30, "warmup": 1, "seconds": 2}
 
     def measure(self, frames, spec=None, property_size=(1280, 720), accepted=True):
-        cap = MagicMock()
+        cap = make_camera()
         cap.read.side_effect = frames
         cap.set.return_value = accepted
-        cap.getBackendName.return_value = "DSHOW"
         props = {cv2.CAP_PROP_FRAME_WIDTH: property_size[0], cv2.CAP_PROP_FRAME_HEIGHT: property_size[1],
                  cv2.CAP_PROP_FPS: 30, cv2.CAP_PROP_FOURCC: cv2.VideoWriter_fourcc(*"MJPG")}
         cap.get.side_effect = props.__getitem__

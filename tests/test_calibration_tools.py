@@ -7,7 +7,9 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
+
+from tests.camera_fixtures import make_camera
 
 import cv2
 import numpy as np
@@ -124,7 +126,7 @@ class PlaneToolTests(unittest.TestCase):
 
     def _run_selection(self, output, steps, camera=False, intrinsics_path=None):
         callback = {}
-        cap = MagicMock()
+        cap = make_camera()
         cap.read.return_value = (True, make_demo())
 
         def register(window, handler):
@@ -190,7 +192,7 @@ class PlaneToolTests(unittest.TestCase):
             self.assertEqual(plane["intrinsics_reference"]["id"], camera["id"])
 
     def test_camera_frame_failure_releases_resource(self):
-        cap = MagicMock()
+        cap = make_camera()
         cap.read.return_value = (False, None)
         with patch("calibrate_plane.open_camera", return_value=cap), \
                 patch("calibrate_plane.cv2.destroyAllWindows"), redirect_stderr(io.StringIO()):
@@ -324,7 +326,7 @@ class MetricIntegrationTests(unittest.TestCase):
         self.assertEqual(tuple(annotated[250, 300]), (255, 255, 255))
 
     def test_c12_calibrated_camera_pause_save_release(self):
-        cap = MagicMock()
+        cap = make_camera()
         cap.read.return_value = (True, make_demo())
         with ExitStack() as stack:
             stack.enter_context(patch("main.open_camera", return_value=cap))

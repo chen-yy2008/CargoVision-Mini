@@ -117,7 +117,7 @@ def detect_objects(frame: np.ndarray, min_area: float = DEFAULT_MIN_AREA
 
 def annotate_frame(frame: np.ndarray, objects: list[dict], fps: float | None = None,
                    paused: bool = False, calibration_status: str | None = None) -> np.ndarray:
-    """原尺寸导出图只画框、中心和短编号；状态一次显示，坐标见工作台列表/原 JSON。
+    """原尺寸导出图画旧框/质心/编号及可用旋转几何；坐标详情见工作台列表/原 JSON。
 
     所有绘制都在副本上进行，不改变源图、像素/毫米结果或导出图尺寸。
     """

@@ -1,6 +1,7 @@
 """CargoVision 简易中文启动器；Tk 管交互，原检测/标定程序在单独进程运行。"""
 
 from copy import deepcopy
+import codecs
 from datetime import datetime
 import json
 import os
@@ -88,9 +89,9 @@ class Launcher:
             self.status.set("本机配置有错误，已保留原文件；请重新设置或预览确认后保存，暂不启动检测。")
         self.poll_id = self.root.after(200, self.poll)
 
-    def log(self, text):
+    def log(self, text, *, raw=False):
         """诊断区可选择/复制；历史完整子进程日志保留在被忽略的 .cache/launcher/。"""
-        self.diagnostics.insert("end", text.rstrip() + "\n")
+        self.diagnostics.insert("end", text if raw else text.rstrip() + "\n")
         self.diagnostics.see("end")
 
     def callback_error(self, kind, value, tb):
@@ -296,7 +297,7 @@ class Launcher:
         directory = PROJECT_DIR / ".cache" / "launcher"
         directory.mkdir(parents=True, exist_ok=True)
         path = directory / f'{datetime.now():%Y%m%d_%H%M%S}_{uuid4().hex[:8]}.log'
-        env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUNBUFFERED="1")
+        env = dict(os.environ, PYTHONIOENCODING="utf-8:strict", PYTHONUNBUFFERED="1")
         output_before = Path(extra["output"]).read_bytes() if extra.get("output") and Path(extra["output"]).exists() else None
         preference_before = self.camera_path.stat().st_mtime_ns if self.camera_path.exists() else None
         with path.open("wb") as stream:
@@ -322,17 +323,46 @@ class Launcher:
             self.job["stopping"] = monotonic()
             self.status.set("正在停止；正常使用建议在 OpenCV 窗口按 Q 释放设备。")
 
+    def read_job_log(self, job, *, final=False):
+        """严格增量读取 UTF-8 日志；跨块的中文保留到下一次读取，不添加换行。
+
+        job 保存字节偏移及解码状态；final=True 在子进程退出后读完尾部并校验
+        最后一个字符。非法/截断字节抛 UnicodeDecodeError，原始日志保留供诊断。
+        """
+        if not job.get("log") or job.get("log_complete") or job.get("log_error"):
+            return
+        if "decoder" not in job:
+            job["decoder"] = codecs.getincrementaldecoder("utf-8")(errors="strict")
+        with job["log"].open("rb") as stream:
+            stream.seek(job.get("offset", 0))
+            while content := stream.read(65536):
+                job["offset"] = stream.tell()
+                text = self.decode_job_log(job, content)
+                if text:
+                    self.log(text, raw=True)
+                if not final:
+                    break
+        if final:
+            text = self.decode_job_log(job, b"", final=True)
+            if text:
+                self.log(text, raw=True)
+            job["log_complete"] = True
+
+    @staticmethod
+    def decode_job_log(job, content, *, final=False):
+        """解码失败保留原异常并记录状态，避免下一轮弹窗或将坏日志当作正常退出。"""
+        try:
+            return job["decoder"].decode(content, final=final)
+        except UnicodeDecodeError:
+            job["log_error"] = True
+            raise
+
     def poll(self):
         """只用 after 轮询日志/进程；扫描和预览驱动卡住时可取消，Tk 保持响应。"""
         try:
             if self.job:
                 job = self.job
-                with job["log"].open("rb") as stream:
-                    stream.seek(job["offset"])
-                    content = stream.read(65536)
-                    job["offset"] = stream.tell()
-                if content:
-                    self.log(content.decode("utf-8", errors="replace"))
+                self.read_job_log(job)
                 elapsed = monotonic() - job["started"]
                 if job["action"] == "detect":
                     self.update_actual(job)
@@ -350,6 +380,8 @@ class Launcher:
                     job["process"].kill()
                 if job["process"].poll() is not None:
                     self.finish(job)
+        except UnicodeDecodeError as exc:
+            self.error("日志编码错误", f'子进程日志不是完整有效的 UTF-8，原文件已保留：{job["log"]}\n{exc}')
         except (OSError, ValueError) as exc:
             self.error("状态读取失败", str(exc))
         self.poll_id = self.root.after(200, self.poll)
@@ -370,14 +402,14 @@ class Launcher:
             button.configure(state="normal")
         self.stop_button.configure(state="disabled")
         self.refresh()
+        self.read_job_log(job, final=True)
+        if job.get("log_error"):
+            self.status.set("程序已退出，但日志存在 UTF-8 编码错误；原始日志已保留，请复制诊断信息。")
+            return
         if job.get("cancelled"):
             self.status.set("当前程序已停止；未确认的设置和未保存标定不会被采用。")
             return
         if job["process"].returncode != 0:
-            if job.get("log"):
-                with job["log"].open("rb") as stream:
-                    stream.seek(max(0, job["log"].stat().st_size - 65536))
-                    self.log("程序末段诊断：\n" + stream.read().decode("utf-8", errors="replace"))
             self.error("程序未正常完成", "请查看下方中文诊断与驱动日志；不会自动切换相机或降级标定。")
             return
         action = job["action"]

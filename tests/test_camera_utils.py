@@ -7,7 +7,9 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
+
+from tests.camera_fixtures import make_camera
 
 import cv2
 import numpy as np
@@ -81,7 +83,7 @@ class CameraPreferenceTests(unittest.TestCase):
             self.assertEqual(list(path.parent.glob("*.tmp")), [])
 
     def test_saved_backend_does_not_fall_back_to_other_backends(self):
-        cap = MagicMock()
+        cap = make_camera()
         cap.open.return_value = False
         with patch("camera_utils.cv2.VideoCapture", return_value=cap), self.assertRaises(RuntimeError):
             camera_utils.open_camera(2, "MSMF")
@@ -89,10 +91,8 @@ class CameraPreferenceTests(unittest.TestCase):
         cap.release.assert_called_once()
 
     def test_enumeration_requires_readable_frame_and_releases_all(self):
-        first, third = MagicMock(), MagicMock()
+        first, third = make_camera(), make_camera()
         first.read.return_value = (True, np.zeros((480, 640, 3), np.uint8))
-        first.getBackendName.return_value = "DSHOW"
-        first.get.return_value = 30
         third.read.return_value = (False, None)
         with patch("camera_utils.open_camera", side_effect=[first, RuntimeError("unavailable"), third]):
             devices = camera_utils.list_cameras(3, "DSHOW")
@@ -101,30 +101,27 @@ class CameraPreferenceTests(unittest.TestCase):
         third.release.assert_called_once()
 
     def test_enumeration_tries_readable_backend_at_same_index(self):
-        bad, good = MagicMock(), MagicMock()
+        bad, good = make_camera(), make_camera()
         bad.read.return_value = (False, None)
         good.read.return_value = (True, make_demo())
-        good.getBackendName.return_value = "MSMF"
-        good.get.return_value = 25
         with patch("camera_utils.os.name", "nt"), patch("camera_utils.open_camera", side_effect=[bad, good]) as opened:
             devices = camera_utils.list_cameras(1)
         self.assertEqual(opened.call_args_list[0].args, (0, "DSHOW"))
         self.assertEqual(opened.call_args_list[1].args, (0, "MSMF"))
-        self.assertEqual(devices[0]["backend"], "MSMF")
+        self.assertEqual(devices[0]["backend"], "MOCK")
         bad.release.assert_called_once()
         good.release.assert_called_once()
 
     def test_reported_fps_unknown_and_size_comes_from_actual_frame(self):
-        cap = MagicMock()
-        cap.getBackendName.return_value = "DSHOW"
+        cap = make_camera()
         for fps in (0, -1, float("nan"), float("inf")):
-            cap.get.return_value = fps
+            cap.get.side_effect = lambda prop: fps
             info = camera_utils.capture_info(cap, np.zeros((720, 1280, 3), np.uint8))
             self.assertIsNone(info["reported_fps"])
             self.assertEqual((info["width"], info["height"]), (1280, 720))
 
     def test_resolution_changes_rejected_before_device_set_when_calibrated(self):
-        cap = MagicMock()
+        cap = make_camera()
         calibration = {"image_size": {"width": 640, "height": 480}}
         for keyword in ("plane", "intrinsics"):
             with self.subTest(keyword=keyword), self.assertRaisesRegex(ValueError, "未更改设备"):
@@ -132,7 +129,7 @@ class CameraPreferenceTests(unittest.TestCase):
         cap.set.assert_not_called()
 
     def test_no_resolution_setting_unless_requested(self):
-        cap = MagicMock()
+        cap = make_camera()
         camera_utils.configure_capture(cap)
         cap.set.assert_not_called()
         cap.set.return_value = False
@@ -151,11 +148,8 @@ class CameraMainTests(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
-    def run_camera(self, argv, keys=None, frame=None, backend="DSHOW", save_error=False):
-        cap = MagicMock()
-        cap.read.return_value = (True, make_demo() if frame is None else frame)
-        cap.getBackendName.return_value = backend
-        cap.get.return_value = 30
+    def run_camera(self, argv, keys=None, frame=None, save_error=False):
+        cap = make_camera(make_demo() if frame is None else frame)
         cap.set.return_value = True
         with ExitStack() as stack:
             opened = stack.enter_context(patch("main.open_camera", return_value=cap))
@@ -180,13 +174,13 @@ class CameraMainTests(unittest.TestCase):
         self.assertEqual(camera_utils.load_camera_preference(self.path)["camera_index"], 2)
         status, cap, second, _, output, _ = self.run_camera([])
         self.assertEqual(status, 0)
-        second.assert_called_once_with(2, "DSHOW")
+        second.assert_called_once_with(2)
         self.assertEqual(cap.set.call_count, 2)
         self.assertIn("本机偏好", output)
 
     def test_explicit_index_overrides_saved_selection_and_corrupt_file(self):
         self.path.write_text("broken", encoding="utf-8")
-        status, _, opened, _, _, _ = self.run_camera(["--camera", "1", "--backend", "msmf"], backend="MSMF")
+        status, _, opened, _, _, _ = self.run_camera(["--camera", "1", "--backend", "msmf"])
         self.assertEqual(status, 0)
         opened.assert_called_once_with(1, "MSMF")
         self.assertEqual(camera_utils.load_camera_preference(self.path)["camera_index"], 1)
@@ -218,7 +212,7 @@ class CameraMainTests(unittest.TestCase):
         self.assertIn("属性读回", output)
         status, cap, opened, _, _, _ = self.run_camera([])
         self.assertEqual(status, 0)
-        opened.assert_called_once_with(2, "DSHOW")
+        opened.assert_called_once_with(2)
         self.assertEqual(cap.set.call_count, 4)
         saved = camera_utils.load_camera_preference(self.path)
         self.assertEqual((saved["requested_fourcc"], saved["requested_fps"]), ("MJPG", 30))
@@ -239,12 +233,14 @@ class CameraMainTests(unittest.TestCase):
 
     def test_list_command_does_not_load_or_save_preference(self):
         self.path.write_text("broken", encoding="utf-8")
-        device = {"index": 1, "width": 640, "height": 480, "backend": "DSHOW", "reported_fps": None}
+        device = {"index": 1, "width": 640, "height": 480, "backend": "MOCK", "reported_fps": None}
         with patch("main.list_cameras", return_value=[device]), patch("main.open_camera") as opened, \
                 patch("main.cv2.destroyAllWindows"), redirect_stdout(io.StringIO()) as output:
             self.assertEqual(main.main(["--list-cameras"]), 0)
         opened.assert_not_called()
-        self.assertIn("--camera 1 --backend dshow", output.getvalue())
+        self.assertIn("--camera 1:", output.getvalue())
+        self.assertIn("MOCK", output.getvalue())
+        self.assertNotIn("--backend", output.getvalue())
         self.assertEqual(self.path.read_text(encoding="utf-8"), "broken")
 
     def test_list_empty_has_actionable_error(self):

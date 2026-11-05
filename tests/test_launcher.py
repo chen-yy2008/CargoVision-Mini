@@ -14,6 +14,8 @@ import tkinter as tk
 import unittest
 from unittest.mock import MagicMock, patch
 
+from tests.camera_fixtures import make_camera, utf8_environment
+
 import cv2
 import numpy as np
 
@@ -158,10 +160,8 @@ class LauncherWorkerTests(unittest.TestCase):
         self.settings = {**DEFAULTS, "camera_index": 2}
 
     def preview(self, key, read_ok=True, visible=1):
-        cap = MagicMock()
+        cap = make_camera()
         cap.read.return_value = (read_ok, np.zeros((480, 640, 3), np.uint8) if read_ok else None)
-        cap.get.return_value = 30
-        cap.getBackendName.return_value = "DSHOW"
         with patch("launcher_worker.open_camera", return_value=cap), patch("launcher_worker.cv2.namedWindow"), \
                 patch("launcher_worker.cv2.imshow"), patch("launcher_worker.cv2.waitKey", return_value=key), \
                 patch("launcher_worker.cv2.getWindowProperty", return_value=visible), patch("launcher_worker.cv2.destroyAllWindows"), \
@@ -188,9 +188,8 @@ class LauncherWorkerTests(unittest.TestCase):
             self.preview(0, read_ok=False)
 
     def test_close_between_window_query_and_draw_is_cancelled(self):
-        cap = MagicMock()
+        cap = make_camera()
         cap.read.return_value = (True, np.zeros((480, 640, 3), np.uint8))
-        cap.get.return_value = 0
         with patch("launcher_worker.open_camera", return_value=cap), patch("launcher_worker.cv2.namedWindow"), \
                 patch("launcher_worker.cv2.imshow", side_effect=cv2.error("window closed")), \
                 patch("launcher_worker.cv2.getWindowProperty", side_effect=cv2.error("window closed")), \
@@ -221,17 +220,26 @@ class LauncherGuiTests(unittest.TestCase):
         self.camera, self.settings_path = self.folder / "camera.json", self.folder / "launcher.json"
         self.root = tk.Tk()
         self.root.withdraw()
-        self.app = launcher.Launcher(self.root, self.settings_path, self.camera)
+        self.root_destroyed = False
+        self.root.bind("<Destroy>", self.record_destroy)
         self.addCleanup(self.destroy)
+        self.app = launcher.Launcher(self.root, self.settings_path, self.camera)
+        # ttk 的主题初始化由 C 层空闲事件调度，不在 after info 中。
+        # 根窗口存活时完成初始化，避免下一例 update() 处理已销毁应用的事件。
+        self.root.update_idletasks()
+
+    def record_destroy(self, event):
+        if event.widget is self.root:
+            self.root_destroyed = True
 
     def destroy(self):
-        try:
-            if self.root.winfo_exists():
-                for callback in self.root.tk.call("after", "info"):
-                    self.root.after_cancel(callback)
-                self.root.destroy()
-        except tk.TclError:
-            pass  # 关闭流程测试可能已经销毁 root。
+        # 用 Destroy 事件记录实际生命周期，不查询已销毁的 Tk，也不吞 TclError。
+        if self.root_destroyed:
+            return
+        for callback in self.root.tk.call("after", "info"):
+            self.root.after_cancel(callback)
+        self.root.update_idletasks()
+        self.root.destroy()
 
     def select_camera(self):
         self.app.settings.update(camera_index=2, backend="dshow")
@@ -306,7 +314,7 @@ class LauncherGuiTests(unittest.TestCase):
     def test_preview_confirmation_saves_actual_camera_and_launcher_only_then(self):
         self.select_camera()
         result = self.folder / "result.json"
-        result.write_text(json.dumps({"status": "confirmed", "info": {"width": 640, "height": 480, "backend": "DSHOW"}}), encoding="utf-8")
+        result.write_text(json.dumps({"status": "confirmed", "info": {"width": 640, "height": 480, "backend": "MOCK"}}), encoding="utf-8")
         self.app.finish(self.fake_job("preview", result=result))
         self.assertTrue(self.camera.exists())
         self.assertTrue(self.settings_path.exists())
@@ -322,7 +330,7 @@ class LauncherGuiTests(unittest.TestCase):
     def test_preview_mismatch_requires_acceptance(self):
         self.select_camera()
         result = self.folder / "result.json"
-        result.write_text(json.dumps({"status": "confirmed", "info": {"width": 1280, "height": 720, "backend": "DSHOW"}}), encoding="utf-8")
+        result.write_text(json.dumps({"status": "confirmed", "info": {"width": 1280, "height": 720, "backend": "MOCK"}}), encoding="utf-8")
         with patch("launcher.messagebox.askokcancel", return_value=False):
             self.app.finish(self.fake_job("preview", result=result))
         self.assertFalse(self.camera.exists())
@@ -347,6 +355,7 @@ class LauncherGuiTests(unittest.TestCase):
             self.app.detect()
             self.assertEqual(spawn.call_args.args[0][0], str(PROJECT_DIR / ".venv" / "Scripts" / "python.exe"))
             self.assertNotIn("shell", spawn.call_args.kwargs)
+            self.assertEqual(spawn.call_args.kwargs["env"]["PYTHONIOENCODING"], "utf-8:strict")
             self.assertEqual(spawn.call_args.kwargs["cwd"], PROJECT_DIR)
             with self.assertRaisesRegex(ValueError, "已有程序"):
                 self.app.detect()
@@ -374,8 +383,96 @@ class LauncherGuiTests(unittest.TestCase):
         self.app.copy_diagnostics()
         self.assertIn("摄像头已断开", self.root.clipboard_get())
 
+    def test_early_close_is_destroyed_once_without_tcl_error(self):
+        self.app.close()
+        self.assertTrue(self.root_destroyed)
+        with patch.object(self.root, "destroy") as destroy:
+            self.destroy()
+        destroy.assert_not_called()
+
+    def test_cleanup_cancels_all_remaining_after_callbacks(self):
+        callback = MagicMock()
+        self.root.after(60000, callback)
+        self.destroy()
+        self.assertTrue(self.root_destroyed)
+        self.assertEqual(self.root.tk.splitlist(self.root.tk.call("after", "info")), ())
+        callback.assert_not_called()
+
+    def test_log_chinese_split_at_64k_boundary_is_not_changed(self):
+        text = "A" * 65535 + "摄像头 MOCK：第一行\n第二行中文。\n"
+        path = self.folder / "split.log"
+        path.write_bytes(text.encode("utf-8"))
+        job = self.fake_job(log=path, offset=0)
+        # 大块日志在此验证流处理，不让 Tk 对长行排版速度影响测试稳定性。
+        output = io.StringIO()
+        with patch.object(self.app, "log", side_effect=lambda text, **kwargs: output.write(text)):
+            self.app.read_job_log(job)
+            self.assertEqual(output.getvalue(), "A" * 65535)
+            self.app.read_job_log(job, final=True)
+        self.assertEqual(output.getvalue(), text)
+        self.assertEqual(job["offset"], len(text.encode("utf-8")))
+        self.assertEqual(path.read_bytes().decode("utf-8"), text)
+
+    def test_log_bytewise_arrival_and_new_job_decoder_are_independent(self):
+        text = "中文标准输出\n中文标准错误\n"
+        for index in range(2):
+            path = self.folder / f"bytewise{index}.log"
+            path.write_bytes(b"")
+            job = self.fake_job(log=path, offset=0)
+            self.app.diagnostics.delete("1.0", "end")
+            for value in text.encode("utf-8"):
+                with path.open("ab") as stream:
+                    stream.write(bytes([value]))
+                self.app.read_job_log(job)
+            self.app.read_job_log(job, final=True)
+            self.assertEqual(self.app.diagnostics.get("1.0", "end-1c"), text)
+
+    def test_failed_child_finish_drains_tail_without_cutting_or_repeating(self):
+        text = "中文诊断" * 20000 + "\n"
+        path = self.folder / "long.log"
+        path.write_bytes(text.encode("utf-8"))
+        job = self.fake_job(log=path, offset=0)
+        job["process"].returncode = 1
+        output = io.StringIO()
+        with patch.object(self.app, "log", side_effect=lambda text, **kwargs: output.write(text)), \
+                patch.object(self.app, "error") as error:
+            self.app.read_job_log(job)
+            self.app.finish(job)
+        error.assert_called_once()
+        self.assertEqual(output.getvalue(), text)
+        self.assertTrue(job["log_complete"])
+
+    def test_invalid_or_incomplete_utf8_is_rejected_without_replacement(self):
+        for raw in (b"\xff", "中".encode("utf-8")[:2]):
+            with self.subTest(raw=raw):
+                path = self.folder / "invalid.log"
+                path.write_bytes(raw)
+                job = self.fake_job(log=path, offset=0)
+                with self.assertRaises(UnicodeDecodeError):
+                    self.app.read_job_log(job, final=True)
+                self.assertTrue(job["log_error"])
+                self.assertEqual(path.read_bytes(), raw)
+
+    def test_bad_log_reports_once_and_does_not_claim_normal_exit(self):
+        path = self.folder / "bad.log"
+        path.write_bytes(b"\xff")
+        job = self.fake_job(log=path, offset=0, started=time.monotonic())
+        job["process"].poll.return_value = None
+        self.app.job = job
+        with patch.object(self.app, "error") as error:
+            self.app.poll()
+            self.app.poll()
+            job["process"].poll.return_value = 0
+            self.app.poll()
+        error.assert_called_once()
+        self.assertEqual(error.call_args.args[0], "日志编码错误")
+        self.assertIn(str(path), error.call_args.args[1])
+        self.assertIsNone(self.app.job)
+        self.assertIn("编码错误", self.app.status.get())
+        self.assertEqual(path.read_bytes(), b"\xff")
+
     def test_real_child_runs_synthetic_mm_workflow_and_returns_to_launcher(self):
-        command = [str(self.app.python()), str(PROJECT_DIR / "main.py"), "--image", str(PROJECT_DIR / "samples/demo.png"),
+        command = [str(self.app.python()), "-X", "utf8", str(PROJECT_DIR / "main.py"), "--image", str(PROJECT_DIR / "samples/demo.png"),
                    "--calibration", str(PROJECT_DIR / "samples/workplane_demo.json"), "--no-display"]
         self.app.start_process("detect", command, deepcopy(self.app.settings))
         deadline = time.monotonic() + 10
@@ -398,9 +495,10 @@ class BootstrapTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(dir=OUTPUT_DIR, prefix="中文 空格 ") as directory:
             path = Path(directory) / "Start_CargoVision.cmd"
             shutil.copyfile(PROJECT_DIR / "Start_CargoVision.cmd", path)
-            process = subprocess.run(["cmd.exe", "/d", "/c", str(path)], input="\n".encode(), capture_output=True, timeout=8)
+            process = subprocess.run(["cmd.exe", "/d", "/c", str(path)], input="\n", capture_output=True,
+                                     encoding="utf-8", errors="strict", env=utf8_environment(), timeout=8)
             self.assertEqual(process.returncode, 1)
-            self.assertIn("找不到项目", process.stdout.decode("utf-8", errors="replace"))
+            self.assertIn("找不到项目", process.stdout)
             self.assertFalse((Path(directory) / ".venv").exists())
 
 

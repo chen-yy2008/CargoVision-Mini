@@ -1,5 +1,113 @@
 # CargoVision 实际测试报告
 
+## v0.4-A 最终提交前验收 — 2026-11-05
+
+- 重新执行 `python -m unittest discover -s tests -q`：**211 项通过，5.038 s，0 失败、0 错误、0 跳过，退出码 0**；不是引用此前测试结果。
+- 分别保留 stdout/stderr，并严格 UTF-8 解码：无乱码替换字符、Tk ThemeChanged 后台异常或 Traceback；GUI 测试包含在完整套件中。摄像头模拟采集为 MOCK、640×480、FPS 未知，真实设备入口由测试哨兵阻断，没有访问真实摄像头。
+- `git diff --check` 通过；核对全部 18 个修改/新增文件均属于 A2、任务书、使用/学习/许可文档或测试环境修复。虚拟环境、缓存、输出、真实照片及个人配置保持忽略，未发现待提交凭证或无关文件。
+- 本次原始日志及结果：`.cache/v04_a_final_acceptance/20261105_190745/`。历史测试日志与旧报告保留，以下“未提交”等描述为此前连续开发阶段的历史状态。
+- 用户本轮说明 A2 实机显示正常；该结论来自用户反馈，Codex没有重新采集真实相机。**A3真实物体几何精度测试继续待完成**，定位独立点精度和真实棋盘格内参/畸变仍未获得新的验收结论。
+- 本轮授权仅为：保留 A1 `19efbcbe`、原任务书 `e3fd940`、修订任务书 `2ee6bd4`，在当前 `feature/v0.4-geometry` 新建一次提交并正常推送到 origin；不squash、不改写历史、不合并main、不创建PR/Tag/Release。main仍为 `c31e756`。
+- 已知边界保留：极长单行日志的 Tk 排版性能没有专项优化；不将显示正常或自动化通过扩展为几何/毫米精度通过。
+
+---
+
+
+## 测试环境专项修复 — 2026-11-05（连续开发，未提交）
+
+### 范围与修复
+
+本次从已有 A2 工作区继续：分支 `feature/v0.4-geometry`，HEAD 为 `2ee6bd4292bf5f4a49efee4f8a7f96c3ba9c30be`，开始时已有 9 个修改文件。保留 A1、任务书和 A2 的全部内容；不修改 main 分支及 main.py，不修改检测、几何、标定、坐标换算或生产摄像头采集逻辑。环境为 Windows / Python 3.12.14 / Tcl/Tk 8.6.12 / OpenCV 4.12.0 / NumPy 2.2.6，未增加依赖。
+
+此前 178/194 项历史日志虽然 unittest 显示 OK，仍分别包含 2/4 次 Tcl 主题后台异常；两份 UTF-8 日志还各含 602 个乱码替换字符。它们不是无诊断的通过记录，以下为本次修复后重新执行的结果。
+
+- Tk 生命周期：GUI 夹具构建完 Tk/ttk 后执行 update_idletasks；通过根窗口 Destroy 事件记录状态，提前关闭后不再重复销毁或查询已销毁窗口。清理全部 after 回调后处理空闲事件，再销毁；不捕获或吞掉 TclError，不重定向 stderr 消除异常。
+- UTF-8：测试进程标准输出/错误使用严格 UTF-8，相关子进程显式传入 UTF-8 环境，父进程明确严格解码。启动器日志使用每个任务独立的标准库增量解码器，跨块字符留到下一块，不擅自插入换行；进程结束读完尾部并检查残缺字符，取消任意截断 64 KiB 尾部后解码的旧路径。非法字节给出中文错误和原日志路径，不重复弹窗、不冒充正常退出，原始文件保留；不使用 errors="replace"。
+- 模拟摄像头：统一夹具明确配置 open/isOpened/read/release/get/set/getBackendName，实际返回后端为 MOCK；尺寸来自合成图像，未提供的 FPS/FOURCC 返回未知，不再由 MagicMock 隐式生成 1.0。DSHOW/MSMF 字符串仅用于后端请求、配置及路由分支样本，不作为模拟采集器的实际后端返回。
+- 真实设备保护：测试包入口安装 VideoCapture 哨兵，未显式 Mock 的构造请求直接抛 AssertionError，阻断真实驱动访问。自检覆盖直接构造器和 camera_utils/main/calibrate_plane/launcher_worker/probe_camera 五个入口，并确认显式 Mock 可以替换哨兵且随后恢复。真实检测子进程测试仍只使用 --image 合成输入。
+
+涉及 10 个文件（其余 A2 文件未改动）：
+
+- launcher.py：只修复日志解码、尾部读取及编码错误反馈。
+- tests/__init__.py：测试进程 UTF-8 输出及真实设备拦截。
+- tests/camera_fixtures.py（新增）：明确属性的 MOCK 采集器、子进程 UTF-8 环境副本。
+- tests/test_test_environment.py（新增）：编码、模拟属性、设备拦截回归。
+- tests/test_launcher.py：窗口生命周期、启动参数及增量日志回归。
+- tests/test_main.py、tests/test_camera_utils.py、tests/test_capture_modes.py、tests/test_calibration_tools.py：复用明确属性的摄像头夹具，保留原控制流程/标定测试。
+- TEST_REPORT.md：本次实际结果及边界。
+
+### 本次实际执行结果
+
+| 检查 | 本次结果 |
+| --- | --- |
+| GUI 独立进程第 1 次 | 21 项通过，2.697 s；0 失败、0 错误、0 跳过；无 Tcl 后台异常 |
+| GUI 独立进程第 2 次 | 21 项通过，2.616 s；0 失败、0 错误、0 跳过；无 Tcl 后台异常 |
+| GUI 独立进程第 3 次 | 21 项通过，2.646 s；0 失败、0 错误、0 跳过；无 Tcl 后台异常 |
+| 中文 stdout/stderr 专项 | 4 项通过，0.281 s；分别捕获、保存并严格读回，与原文逐字相同；原始字节和逐字节增量解码均通过；GBK 宿主覆盖测试通过 |
+| 摄像头属性及拦截专项 | 6 项通过，0.003 s；MOCK/尺寸/未知 FPS/FOURCC、显式属性、全部入口阻断及 Mock 恢复通过 |
+| 既有摄像头/标定工具/控制流程回归 | 93 项通过，0.989 s；全部采用模拟设备 |
+| 完整 unittest discover | **211 项通过，4.387 s；0 失败、0 错误、0 跳过；退出码 0** |
+| 完整日志检查 | stdout/stderr 均严格 UTF-8；无替换字符、乱码、ThemeChanged/application has been destroyed、Traceback 或失败信息；模拟采集明确为 MOCK，FPS 未知 |
+
+原 194 项保留，新增 17 项（GUI/流式日志 7 项，编码/模拟器/拦截 10 项）。本次执行的完整命令为：
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests -q
+```
+
+GUI 以 `python -m unittest tests.test_launcher.LauncherGuiTests -q` 在独立进程中连续执行三次。全部测试进程环境明确设置 PYTHONIOENCODING=utf-8:strict、PYTHONUTF8=1；父进程用 encoding="utf-8", errors="strict" 分别捕获并保留 stdout/stderr，没有丢弃或屏蔽 stderr。
+
+本次结果及日志保存在被忽略的 `.cache/test_environment_fix/`：gui_1/2/3、utf8、camera_guard、camera_regression、full 的 stdout/stderr 日志，以及 targeted_results.json、full_results.json；历史 A1/A2 日志未覆盖。另保留 chinese_sample.stdout.log（70 字节）及 chinese_sample.stderr.log（55 字节）：两份原始中文输出均经严格 UTF-8 解码及保存后逐字比对成功。
+
+### 尚存边界及 Git
+
+三个专项问题在上述软件验证范围内均已修复。超长单行文本在隐藏 Tk 控件中的排版曾表现缓慢，本轮没有扩展 GUI 性能改造；64 KiB 边界和长尾完整性使用内存接收端验证，短中文逐字节到达另经实际 Tk 诊断控件验证。没有用性能替身代替窗口生命周期或短中文显示测试。
+
+没有访问真实摄像头，没有新增真实精度验收结论。A2 摄像头显示、实验室独立点定量精度及真实棋盘格内参/畸变仍按原计划验收。所有改动保留工作区；不创建 Commit、Tag、PR 或 Release，不推送、不合并、不修改 main，不继续 A3。
+
+---
+
+
+## v0.4-A2：几何可视化（工作区待统一审核）— 2026-11-05
+
+### 本轮范围与实际结果
+
+开始时位于本地 feature/v0.4-geometry，HEAD为2ee6bd4292bf5f4a49efee4f8a7f96c3ba9c30be，工作区干净；A1的19efbcbe与任务书2ee6bd4均为当前历史祖先，main仍为c31e756。本轮直接沿用本地历史，未从远程重置。
+
+环境继续为Windows / Python 3.12.14 / OpenCV 4.12.0 / NumPy 2.2.6，无新增依赖。基线178项测试通过；新增16项离线显示测试后，**完整回归194项通过、0失败、0跳过**。
+
+| 项目 | 实际验证内容与边界 |
+| --- | --- |
+| 几何描画 | 合成0°、30°、±89.5°对象：青色闭合四角、洋红空心中心、黄色无箭头长轴；沿实际corners顺序绘制，不解释为TL/TR/BR/BL |
+| 无效方向 | false或null角时仍显示有效框/中心，无轴线；详情为Axis N/A / NO VALID DIRECTION |
+| 兼容/安全降级 | 无geometry旧目标、空值、缺字段、交叉/退化角点、NaN/Infinity、极端整数、非法类型不会使渲染崩溃；有效部分可单独显示，数据不回写 |
+| 预览缩放 | 已知源320×240，960×720画布对应674×506图像和(8,117)偏移，800×500对应475×356和(27,82)；测试实际绘图四角、中心、轴端点及画布上的黄色像素位置 |
+| 数据/帧不变 | 原对象的完整JSON文本、center_px/center_mm/corners/边长/角度及输入像素在多个大小、简洁/详细渲染后完全一致；文字边长/角度仍为源图数值 |
+| 分页与行距 | D模式7行/126 pixel行块；960×720每页4目标，13目标可逐页遍历，行距与底边安全；高度不足时只提示放大，不画残缺数据行；简洁模式保留原信息密度 |
+| Mask | 图像区域逐像素匹配纯Mask预览；不调用目标/几何描画，信息区与页脚仍可显示状态 |
+| PNG/JSON | 实际save_results写出并读回：PNG为原640×480彩色标注，JSON与渲染前完全相等，schema 0.2、A1字段、旧质心/毫米均保留；Mask预览不改变保存对象 |
+| 原生窗口程序化检查 | 实际创建OpenCV窗口，RGB简洁/详细960×720、Mask详细800×500、RGB详细800×900各连续刷新3次，实际图像区稳定；原JSON不变，程序化关闭后确认窗口已关闭。不是人工键鼠验收 |
+| 合成画面查看 | 实际生成并查看含斜矩形、近竖矩形、L形、近方形和圆形的5目标画面及详情两页；L形原质心与矩形中心分开，方向无效目标无黄色轴，列表无遮挡；仅为合成输入 |
+
+关键绘图范围防护只跳过不适合交给OpenCV整数绘图的分量，不改变JSON中的数学角点/ROI；画布边界裁剪与取整仅用于描画。长宽比可靠性仍由A1计算，不在显示层重新拟合或追加算法判据。
+
+### 执行命令与实机待验收
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests -q
+.\.venv\Scripts\python.exe -m compileall -q display.py vision.py tests
+.\.venv\Scripts\python.exe -m pip check
+git diff --check
+```
+
+本轮软件、原生窗口和导出检查均使用合成图像，不访问真实摄像头。A2真实设备下的颜色对比、密集目标可读性、D翻页/窗口缩放、Mask、P/S/Q及保存仍待人工实机验收；定位独立点精度继续待实验室测试。已有v0.3功能验收是用户反馈，不被此次A2合成测试替代，也不自动扩大为A2实机通过。
+
+合成预览在被忽略的 `.cache/a2/`，窗口日志在 `.cache/a2_native_smoke.log`，未保存真实相机照片。代码改动为display.py及其测试，vision.py仅更新annotate_frame的docstring；A1几何、检测、采集循环、标定、毫米变换、导出函数、启动器和依赖保持不变。
+
+按本轮连续开发要求，所有A2修改仅保留工作区，**未创建分支或Commit、未推送、未合并、未创建PR/Tag/Release**；main及原有提交不变。没有已发现但未修复的软件回归问题；真实设备显示、性能和精度不在本轮通过结论内。
+
+---
+
 ## v0.4-A1：目标几何信息提取 — 2026-11-05
 
 ### 基线、范围与结果

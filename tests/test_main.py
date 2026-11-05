@@ -7,7 +7,9 @@ from contextlib import ExitStack, redirect_stderr, redirect_stdout
 import io
 from pathlib import Path
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
+
+from tests.camera_fixtures import make_camera
 
 import cv2
 
@@ -32,7 +34,7 @@ class MainTests(unittest.TestCase):
         close.assert_called_once()
 
     def test_t06_camera_unavailable_releases_all_attempts(self):
-        cap = MagicMock()
+        cap = make_camera()
         cap.open.return_value = False
         with patch("main.cv2.VideoCapture", return_value=cap), \
                 self.assertRaisesRegex(RuntimeError, "无法打开摄像头 999"):
@@ -41,7 +43,7 @@ class MainTests(unittest.TestCase):
         self.assertEqual(cap.open.call_count, cap.release.call_count)
 
     def test_camera_backend_fallback(self):
-        first, second = MagicMock(), MagicMock()
+        first, second = make_camera(), make_camera()
         first.open.return_value = False
         second.open.return_value = second.isOpened.return_value = True
         with patch("camera_utils.os.name", "nt"), \
@@ -51,7 +53,7 @@ class MainTests(unittest.TestCase):
         second.release.assert_not_called()
 
     def test_t06_failed_read_releases_camera(self):
-        cap = MagicMock()
+        cap = make_camera()
         cap.read.return_value = (False, None)
         error = io.StringIO()
         with patch("main.open_camera", return_value=cap), patch("main.create_window"), \
@@ -63,7 +65,7 @@ class MainTests(unittest.TestCase):
         close.assert_called_once()
 
     def test_window_creation_failure_releases_camera(self):
-        cap = MagicMock()
+        cap = make_camera()
         with patch("main.open_camera", return_value=cap), \
                 patch("main.create_window", side_effect=cv2.error("GUI unavailable")), \
                 patch("main.cv2.destroyAllWindows"), redirect_stderr(io.StringIO()):
@@ -71,7 +73,7 @@ class MainTests(unittest.TestCase):
         cap.release.assert_called_once()
 
     def test_pause_save_resume_and_quit_use_same_frame(self):
-        cap = MagicMock()
+        cap = make_camera()
         frame = make_demo()
         cap.read.return_value = (True, frame)
         with ExitStack() as stack:
@@ -136,7 +138,7 @@ class MainTests(unittest.TestCase):
         for argv in (["--image", "demo.png"], ["--camera", "0"]):
             for closed in (0, cv2.error("window destroyed")):
                 with self.subTest(argv=argv, closed=type(closed)), ExitStack() as stack:
-                    cap = MagicMock()
+                    cap = make_camera()
                     cap.read.return_value = (True, make_demo())
                     stack.enter_context(patch("main.open_camera", return_value=cap))
                     stack.enter_context(patch("main.read_image", return_value=make_demo()))
@@ -159,7 +161,7 @@ class MainTests(unittest.TestCase):
         for argv in (["--image", "demo.png"], ["--camera", "0"]):
             for failing_call in ("main.cv2.getTrackbarPos", "main.show_preview", "main.cv2.waitKey"):
                 with self.subTest(argv=argv, failing_call=failing_call), ExitStack() as stack:
-                    cap = MagicMock()
+                    cap = make_camera()
                     cap.read.return_value = (True, make_demo())
                     stack.enter_context(patch("main.open_camera", return_value=cap))
                     stack.enter_context(patch("main.read_image", return_value=make_demo()))
@@ -182,7 +184,7 @@ class MainTests(unittest.TestCase):
     def test_window_error_is_reported_while_window_still_open(self):
         for argv in (["--image", "demo.png"], ["--camera", "0"]):
             with self.subTest(argv=argv), ExitStack() as stack:
-                cap = MagicMock()
+                cap = make_camera()
                 cap.read.return_value = (True, make_demo())
                 stack.enter_context(patch("main.open_camera", return_value=cap))
                 stack.enter_context(patch("main.read_image", return_value=make_demo()))
@@ -199,7 +201,7 @@ class MainTests(unittest.TestCase):
                     cap.release.assert_called_once()
 
     def test_closed_window_stops_before_next_frame(self):
-        cap = MagicMock()
+        cap = make_camera()
         with patch("main.open_camera", return_value=cap), patch("main.create_window"), \
                 patch("main.cv2.getWindowProperty", return_value=0), \
                 patch("main.cv2.destroyAllWindows"):
