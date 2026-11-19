@@ -403,3 +403,14 @@ $CameraIndex = 1
 设置存于 `local_settings/launcher.json`，摄像头实际成功偏好继续使用原 `camera.json`，两者均被 Git 忽略。保存采用临时文件原子替换；损坏配置会保留原文件并明确提示，通过界面重新保存或成功预览恢复，不必编辑 JSON。相对文件路径按项目目录解析，与双击时工作目录无关。
 
 本阶段新增 `launcher.py`（界面与进程管理）、`launcher_config.py`（校验、状态和 argv）、`launcher_worker.py`（扫描/预览）及双击入口；原检测、标定数学、命令行和 JSON 数据格式保持不变。当前软件回归与真实设备检查边界见 TEST_REPORT.md。首次实机验收建议：确认 USB 预览 → 保存参数并重启恢复 → 选择已验收标定和现场确认 → 看像素/毫米及 OUTSIDE ROI → P/S/Q/Mask/保存 → 退出后重新打开设备。
+
+## 16. K230 板端视觉端（独立开发线）
+
+桌面版（Windows + Python + OpenCV）与 K230 板端程序是关联但不同的运行环境。K230 v1 当前源码保存在独立本地工作区 `CargoVision_K230`，尚未同步到本仓库；本仓库的 K230 文档用于记录接口、测试边界和现场标定流程，不能直接作为 K230 板端源码部署包。
+
+- [K230 文档索引](docs/k230/README.md)
+- [K230 阶段状态](docs/k230/K230_STAGE_STATUS.md)
+- [UART 诊断通信说明](docs/k230/K230_UART_DIAGNOSTIC.md)
+- [现场标定指南](docs/k230/K230_CALIBRATION_GUIDE.md)
+
+当前边界：UART 诊断软件离线测试已通过，CanMV IDE 4.0.9 与 USB REPL 已实机验证；UART2 GPIO 物理回环、STM32 双向通信、机械绝对坐标转换和电机联调尚未完成。第一版 UART 返回 `PX` 像素诊断结果，不发送 `MOVE`，不驱动电机。
